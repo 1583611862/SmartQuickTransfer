@@ -3,7 +3,7 @@
 一个用于 Unity 游戏 **Probably Stolen**（版本 0.46）的独立 MOD。它拦截"双击物品"这一操作，把物品快速投放到**最近使用过的机器 / 工具 / 容器窗口**；从机器中取出物品时则回到存放区；没有可用窗口时投放到默认存放区，并播放一段物品飞行的视觉动画。
 
 - **MOD ID**：`smart_quick_transfer`
-- **版本**：1.2.0
+- **版本**：1.2.3
 - **程序集**：`SmartQuickTransfer.dll`
 - **目标框架**：.NET Standard 2.1 / C# 7.3（Harmony 2.4.2）
 - **依赖**：无。不需要任何其他 MOD 或前置框架
@@ -46,11 +46,23 @@
 
 ### 目的地
 
+区域名称与游戏界面一致（源码字段见括号）：
+
+| 游戏界面区域 | 源码字段 | 所在位置 |
+|---|---|---|
+| 仓库 | `invElement` / `invWindow` | 屏幕底部 24×10 大格子（游戏 Ctrl 快速转移的目标） |
+| 桌面 | `backInvinvElement` / `backInvWindow` | 屏幕中部 18×4 柜台（游戏 Alt 快速转移的目标） |
+| 展示柜 | `showcaseElement` / `showcaseWindow` | 左侧 7×5 陈列格 |
+| 前台柜台 | `frontInvinvElement` / `frontInvWindow` | 桌面之上，仅部分场景显示 |
+| 夜间地面 | `afterhourInventory` / `afterhourWindow` | 店外 / 打烊后的地面面板 |
+
 | 场景 | 目的地 |
 |---|---|
-| 来源是机器 / 工具窗口 | `machine_return_target`，默认**后场仓库**，满则退到随身背包 |
+| 来源是机器 / 工具窗口 | `machine_output_area`，默认**仓库**，满则退到桌面 |
 | 有可用目标窗口 | 该窗口（原生槽位规则） |
-| 无可用目标窗口 | `desktop_target`，默认 `自动`：店内 随身背包 → 后场仓库 → 前台 → 展示柜；店外 夜间地面优先 |
+| 无可用目标窗口 | `fallback_area`，默认 `自动`：店内 仓库 → 桌面 → 展示柜 → 前台柜台；店外 夜间地面优先 |
+
+> 游戏里没有"随身背包"这个常驻面板：背包是玩家身上的容器物品（`backpack_small/medium/large`），打开的是它自己的窗口，窗口内双击按容器规则处理。
 
 ---
 
@@ -85,9 +97,11 @@ Mods/
 | 常规 | `keep_container_double_click` | 开 | 保留容器双击开箱 |
 | 动画反馈 | `play_flight_animation` | 开 | 播放转移飞行动画 |
 | 动画反馈 | `animation_duration` | 0.24 | 飞行动画时长（秒），范围 0.1–0.6 |
-| 目标选择 | `include_store_panels` | 关 | 常驻存放面板也可作为目标 |
-| 目标选择 | `desktop_target` | 自动 | 无目标窗口时的去向：自动 / 随身背包 / 后场仓库 / 前台柜台 / 展示柜 |
-| 目标选择 | `machine_return_target` | 后场仓库 | 从机器取出物品的去向 |
+| 目标选择 | `include_store_panels` | 关 | 常驻存放面板（仓库/桌面/展示柜/前台柜台/夜间地面）也可作为目标 |
+| 目标选择 | `fallback_area` | 自动 | 无目标窗口时的去向：自动 / 仓库 / 桌面 / 展示柜 / 前台柜台 / 夜间地面 |
+| 目标选择 | `machine_output_area` | 仓库 | 从机器取出物品的去向：自动 / 仓库 / 桌面 / 展示柜 / 前台柜台 |
+
+> 1.2.1 及更早使用 `desktop_target` / `machine_return_target`，且"随身背包 / 后场仓库"标签与面板实际位置不符。旧键不再读取；旧标签按物理去向归一化（随身背包 → 仓库、后场仓库 → 桌面）。
 
 ---
 
@@ -149,13 +163,21 @@ Prefix 返回 `false` 时只跳过"打开窗口 / 使用物品"的最终动作�
 
 ## 日志
 
-F8 控制台过滤 `[SmartQuickTransfer]`。日志级别只使用 **info / error** 两种。
+日志级别只使用 **info / error** 两种。游戏默认不带控制台（`DevConsoleStripper` 会在没有开发标记时销毁 `QuantumConsole`），两种取日志方式：
+
+1. 在游戏根目录（`Probably Stolen.exe` 所在目录）新建空文件 `dev.txt`，重启游戏，按 **F8** 打开控制台，输入 `SmartQuickTransfer` 过滤。
+2. 直接读 Unity 日志：`%USERPROFILE%\AppData\LocalLow\<公司名>\Probably Stolen\Player.log`。
 
 ```
-[SmartQuickTransfer] moved 1 x 'battery_basic' into 'Recharger [machine_recharger]' (machinery/tool window).
-[SmartQuickTransfer] taken out of a machine; moved 2 x 'scrap_metal' to storage.
+[SmartQuickTransfer] moved 1 x 'battery_basic' from 'Recharger [machine_recharger]' into 'Recharger [machine_recharger]' (machinery/tool window); item now in 其它容器.
+[SmartQuickTransfer] taken out of a machine; moved 2 x 'scrap_metal' from 'Recycler [machine_recycler]' into 仓库; item now in 仓库.
 [SmartQuickTransfer] target 'Recharger' has no slot that accepts 'sword_rusty'; item kept in place.
+[SmartQuickTransfer] flight canvas created at sorting order 30000.
+[SmartQuickTransfer] flight animation started (612 px, icon 32x32, layer 30000, start 512,388 -> end 480,120).
 ```
+
+- `item now in …` 是移动完成后回读的真实区域，必须与目的地一致，否则说明发生了二次移动。
+- `start x,y -> end x,y` 是屏幕像素坐标，用于判断异常出在起点、终点还是首帧。
 
 ---
 
