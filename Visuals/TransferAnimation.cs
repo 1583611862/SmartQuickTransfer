@@ -152,9 +152,18 @@ namespace SmartQuickTransfer.Visuals
                 }
                 ghost.transform.SetAsLastSibling();
 
+                // A fresh RectTransform is anchored at the canvas centre and the driver only
+                // repositions it on the next Update, so for one rendered frame the ghost sits in
+                // the middle of the screen - which reads as "it flashes over the desk first".
+                // Put both ghosts on the captured start point before this frame is drawn.
+                PlaceAtScreenPoint(trail, startScreen);
+                PlaceAtScreenPoint(ghost, startScreen);
+
                 ModEntry.LogInfo("flight animation started (" + Mathf.RoundToInt(Vector2.Distance(startScreen, endScreen))
                     + " px, icon " + Mathf.RoundToInt(size.x) + "x" + Mathf.RoundToInt(size.y)
-                    + ", layer " + FlightCanvasSortingOrder + ").");
+                    + ", layer " + FlightCanvasSortingOrder + ", start " + Mathf.RoundToInt(startScreen.x)
+                    + "," + Mathf.RoundToInt(startScreen.y) + " -> end " + Mathf.RoundToInt(endScreen.x)
+                    + "," + Mathf.RoundToInt(endScreen.y) + ").");
 
                 GameObject host = new GameObject("SQT_FlightDriver");
                 driver = host.AddComponent<FlightDriver>();
@@ -229,6 +238,28 @@ namespace SmartQuickTransfer.Visuals
                 flightRoot = null;
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Moves a ghost to a screen point immediately. The flight canvas is a full-screen
+        /// ScreenSpaceOverlay root canvas whose world space equals screen pixels, so a world
+        /// position is the exact screen position - no dependency on the canvas rect being laid
+        /// out yet (which is not guaranteed on the frame the canvas is created).
+        /// </summary>
+        private static void PlaceAtScreenPoint(GameObject target, Vector2 screenPoint)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            RectTransform rect = target.transform as RectTransform;
+            if (rect == null)
+            {
+                return;
+            }
+
+            rect.position = new Vector3(screenPoint.x, screenPoint.y, rect.position.z);
         }
 
         private static GameObject CreateGhost(RectTransform parent, string name, FlightCapture capture, Vector2 size, float alpha)
