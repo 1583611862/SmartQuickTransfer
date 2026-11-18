@@ -1,0 +1,20 @@
+## .NET / MSBuild build output
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## IDE
+.vs/
+.vscode/
+.idea/
+
+## Compiled assemblies (build artifacts, not source)
+*.dll
+*.pdb
+
+## OS
+Thumbs.db
+.DS_Store
