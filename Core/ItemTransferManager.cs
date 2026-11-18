@@ -62,8 +62,10 @@ namespace SmartQuickTransfer.Core
 
             TransferAnimation.Play(capture, item, slot, ShouldHideSource(capture, item, moved, requested));
 
-            ModEntry.LogInfo("moved " + moved + " x " + DescribeItem(item) + " into '"
-                + WindowActivityManager.Describe(target) + "' (" + MachineSlotResolver.Describe(target) + ").");
+            ModEntry.LogInfo("moved " + moved + " x " + DescribeItem(item) + " from '"
+                + WindowActivityManager.Describe(sourceWindow) + "' into '"
+                + WindowActivityManager.Describe(target) + "' (" + MachineSlotResolver.Describe(target)
+                + "); item now in " + DescribeFinalArea(item) + ".");
             return TransferOutcome.MovedToWindow;
         }
 
@@ -87,8 +89,11 @@ namespace SmartQuickTransfer.Core
 
             TransferAnimation.Play(capture, item, slot, ShouldHideSource(capture, item, moved, requested));
 
-            ModEntry.LogInfo((fromMachine ? "taken out of a machine; moved " : "no target window open; moved ")
-                + moved + " x " + DescribeItem(item) + " to storage.");
+            ModEntry.LogInfo((fromMachine ? "taken out of a machine" : "no target window open")
+                + "; moved " + moved + " x " + DescribeItem(item) + " from '"
+                + WindowActivityManager.Describe(sourceWindow) + "' into "
+                + DesktopTransfer.DescribeArea(destination) + "; item now in "
+                + DescribeFinalArea(item) + ".");
             return TransferOutcome.MovedToFallback;
         }
 
@@ -127,6 +132,26 @@ namespace SmartQuickTransfer.Core
 
             string identifier = string.IsNullOrEmpty(item.identifier) ? "<unknown>" : item.identifier;
             return "'" + identifier + "'";
+        }
+
+        /// <summary>
+        /// Reads back where the item really ended up after the native accept, so a double hop
+        /// (for example 桌面 first and 仓库 afterwards) shows up directly in the log.
+        /// </summary>
+        private static string DescribeFinalArea(GameItem item)
+        {
+            try
+            {
+                if (item == null || item.parentInventory == null)
+                {
+                    return "a merged stack or nowhere";
+                }
+                return DesktopTransfer.DescribeArea(item.parentInventory);
+            }
+            catch (Exception)
+            {
+                return "<unknown>";
+            }
         }
     }
 }

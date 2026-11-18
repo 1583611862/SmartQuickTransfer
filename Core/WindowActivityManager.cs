@@ -176,6 +176,12 @@ namespace SmartQuickTransfer.Core
 
             try
             {
+                string area = DescribeArea(window);
+                if (area != null)
+                {
+                    return area;
+                }
+
                 if (window.parentItems != null && window.parentItems.Count > 0 && window.parentItems[0] != null)
                 {
                     GameItem owner = window.parentItems[0];
@@ -193,6 +199,37 @@ namespace SmartQuickTransfer.Core
             }
 
             return window.canMove ? "movable window" : "store panel";
+        }
+
+        /// <summary>Names the fixed shop panels the way the game UI shows them, or null.</summary>
+        private static string DescribeArea(PixelWindow window)
+        {
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null)
+            {
+                return null;
+            }
+            if (ReferenceEquals(window, entry.invWindow))
+            {
+                return TransferSettings.TargetStorage;
+            }
+            if (ReferenceEquals(window, entry.backInvWindow))
+            {
+                return TransferSettings.TargetDesk;
+            }
+            if (ReferenceEquals(window, entry.showcaseWindow))
+            {
+                return TransferSettings.TargetShowcase;
+            }
+            if (ReferenceEquals(window, entry.frontInvWindow))
+            {
+                return TransferSettings.TargetFrontCounter;
+            }
+            if (ReferenceEquals(window, entry.afterhourWindow))
+            {
+                return TransferSettings.TargetNightGround;
+            }
+            return null;
         }
     }
 }

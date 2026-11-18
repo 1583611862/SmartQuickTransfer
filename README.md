@@ -107,7 +107,7 @@ pwsh ./build.ps1 -GameManagedDir "C:\path\to\Probably Stolen_Data\Managed"
 pwsh ./build.ps1 -CompilerDirectory "C:\path\to\roslyn\bincore"
 ```
 
-产物输出到 `mod/SmartQuickTransfer/`，并自动复制 `manifest.xml`。也可直接用 `dotnet build SmartQuickTransfer.csproj -c Release -p:GameManagedDir="..."`。
+产物输出到 `../release/`，并自动复制 `manifest.xml`。也可直接用 `dotnet build SmartQuickTransfer.csproj -c Release -p:GameManagedDir="..."`。
 
 ---
 

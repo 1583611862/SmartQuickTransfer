@@ -7,13 +7,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $sourceDir = $PSScriptRoot
-$workspaceRoot = Split-Path -Parent $sourceDir
+$modDir = Split-Path -Parent $sourceDir
+$workspaceRoot = Split-Path -Parent (Split-Path -Parent $modDir)
 
 if ([string]::IsNullOrEmpty($GameManagedDir)) {
     $GameManagedDir = Join-Path $workspaceRoot 'Managed'
 }
 if ([string]::IsNullOrEmpty($OutputDir)) {
-    $OutputDir = Join-Path (Join-Path $workspaceRoot 'mod') 'SmartQuickTransfer'
+    $OutputDir = Join-Path $modDir 'release'
 }
 
 $assemblyName = 'SmartQuickTransfer'

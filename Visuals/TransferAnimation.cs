@@ -10,6 +10,14 @@ namespace SmartQuickTransfer.Visuals
         private const float SafetyLifetime = 3f;
         private const float MinimumTravelPixels = 6f;
 
+        // Movable windows are re-parented by the game into UIFamilyLayer's FloatingWindowCanvas
+        // (a root overlay canvas at sortingOrder 3) and CustomUIManager uses 900. A dedicated root
+        // canvas far above all of them is the only way to keep the ghost visible everywhere.
+        private const int FlightCanvasSortingOrder = 30000;
+
+        private static Canvas flightCanvas;
+        private static RectTransform flightRoot;
+
         internal static FlightCapture Capture(GameItem item)
         {
             FlightCapture capture = new FlightCapture();
@@ -100,17 +108,10 @@ namespace SmartQuickTransfer.Visuals
             FlightDriver driver = null;
             try
             {
-                RenderHandler renderer = RenderHandler.current;
-                Canvas canvas = renderer == null ? null : renderer.windowUICanvas;
-                if (canvas == null)
-                {
-                    ModEntry.LogInfo("animation skipped: the window canvas is not available.");
-                    return;
-                }
-
-                RectTransform parent = canvas.transform as RectTransform;
+                RectTransform parent = EnsureFlightRoot();
                 if (parent == null)
                 {
+                    ModEntry.LogInfo("animation skipped: the flight canvas could not be created.");
                     return;
                 }
 
@@ -133,7 +134,10 @@ namespace SmartQuickTransfer.Visuals
                     return;
                 }
 
-                float scaleFactor = Mathf.Max(0.0001f, canvas.scaleFactor);
+                // The flight canvas has no CanvasScaler, so its scale factor stays at 1 and local
+                // units equal screen pixels; the size is divided by it anyway to stay correct if
+                // that ever changes.
+                float scaleFactor = flightCanvas == null ? 1f : Mathf.Max(0.0001f, flightCanvas.scaleFactor);
                 Vector2 size = capture.ScreenSize / scaleFactor;
                 if (size.x < 1f || size.y < 1f)
                 {
@@ -149,7 +153,8 @@ namespace SmartQuickTransfer.Visuals
                 ghost.transform.SetAsLastSibling();
 
                 ModEntry.LogInfo("flight animation started (" + Mathf.RoundToInt(Vector2.Distance(startScreen, endScreen))
-                    + " px, icon " + Mathf.RoundToInt(size.x) + "x" + Mathf.RoundToInt(size.y) + ").");
+                    + " px, icon " + Mathf.RoundToInt(size.x) + "x" + Mathf.RoundToInt(size.y)
+                    + ", layer " + FlightCanvasSortingOrder + ").");
 
                 GameObject host = new GameObject("SQT_FlightDriver");
                 driver = host.AddComponent<FlightDriver>();
@@ -183,6 +188,46 @@ namespace SmartQuickTransfer.Visuals
                     }
                 }
                 ModEntry.LogError("could not start the flight animation: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Dedicated root overlay canvas that sits above every window layer of the game
+        /// (floating windows, custom UI, tooltips). It carries no GraphicRaycaster and the ghosts
+        /// never raycast, so it cannot swallow input.
+        /// </summary>
+        private static RectTransform EnsureFlightRoot()
+        {
+            if (flightRoot != null)
+            {
+                return flightRoot;
+            }
+
+            try
+            {
+                GameObject canvasObject = new GameObject("SQT_FlightCanvas", typeof(RectTransform));
+                flightCanvas = canvasObject.AddComponent<Canvas>();
+                flightCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                flightCanvas.sortingOrder = FlightCanvasSortingOrder;
+
+                RectTransform rect = canvasObject.GetComponent<RectTransform>();
+                rect.SetParent(null, false);
+
+                // A root ScreenSpaceOverlay canvas is driven to the full screen by Unity; only the
+                // pivot matters here, because the ghost positions are local to it.
+                rect.pivot = new Vector2(0.5f, 0.5f);
+                rect.localScale = Vector3.one;
+
+                flightRoot = rect;
+                ModEntry.LogInfo("flight canvas created at sorting order " + FlightCanvasSortingOrder + ".");
+                return flightRoot;
+            }
+            catch (Exception e)
+            {
+                ModEntry.LogError("could not create the flight canvas: " + e.Message);
+                flightCanvas = null;
+                flightRoot = null;
+                return null;
             }
         }
 

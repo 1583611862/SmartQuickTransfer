@@ -2,20 +2,27 @@ using System;
 
 namespace SmartQuickTransfer.Core
 {
+    /// <summary>
+    /// The storage areas of the shop, named exactly like the panels the player sees:
+    /// 仓库 = the bottom 24x10 grid (EmporiumEntry.invElement), 桌面 = the middle 18x4 counter
+    /// (backInvinvElement), 展示柜 = showcaseElement, 前台柜台 = frontInvinvElement,
+    /// 夜间地面 = afterhourInventory.
+    /// </summary>
     internal sealed class TransferSettings
     {
-        internal const string DesktopAuto = "自动";
-        internal const string DesktopPlayerInventory = "随身背包";
-        internal const string DesktopBackInventory = "后场仓库";
-        internal const string DesktopFrontCounter = "前台柜台";
-        internal const string DesktopShowcase = "展示柜";
+        internal const string TargetAuto = "自动";
+        internal const string TargetStorage = "仓库";
+        internal const string TargetDesk = "桌面";
+        internal const string TargetShowcase = "展示柜";
+        internal const string TargetFrontCounter = "前台柜台";
+        internal const string TargetNightGround = "夜间地面";
 
         private ConfigEntry<bool> enabled;
         private ConfigEntry<bool> preserveContainerOpen;
         private ConfigEntry<bool> preserveMachineOpen;
         private ConfigEntry<bool> includeStorePanels;
-        private ConfigEntry<string> desktopTarget;
-        private ConfigEntry<string> machineReturnTarget;
+        private ConfigEntry<string> fallbackArea;
+        private ConfigEntry<string> machineOutputArea;
         private ConfigEntry<bool> animate;
         private ConfigEntry<float> animationDuration;
 
@@ -41,14 +48,16 @@ namespace SmartQuickTransfer.Core
             get { return includeStorePanels != null && includeStorePanels.Value; }
         }
 
-        internal string DesktopTarget
+        /// <summary>Where an item goes when no movable window can take it.</summary>
+        internal string FallbackArea
         {
-            get { return Normalize(desktopTarget == null ? DesktopAuto : desktopTarget.Value, DesktopAuto); }
+            get { return Normalize(fallbackArea == null ? TargetAuto : fallbackArea.Value, TargetAuto); }
         }
 
-        internal string MachineReturnTarget
+        /// <summary>Where an item goes when it is taken out of a machine or tool.</summary>
+        internal string MachineOutputArea
         {
-            get { return Normalize(machineReturnTarget == null ? DesktopBackInventory : machineReturnTarget.Value, DesktopBackInventory); }
+            get { return Normalize(machineOutputArea == null ? TargetStorage : machineOutputArea.Value, TargetStorage); }
         }
 
         internal bool Animate
@@ -113,17 +122,17 @@ namespace SmartQuickTransfer.Core
 
                 settings.includeStorePanels = config.Define("include_store_panels", false, "目标选择",
                     () => "常驻存放面板也可作为目标",
-                    () => "开启后，随身背包、后场仓库、前台柜台、展示柜这些常驻面板本身也能成为转移目标；关闭时它们只作为兜底存放区。");
+                    () => "开启后，仓库、桌面、展示柜、前台柜台、夜间地面这些常驻面板本身也能成为转移目标；关闭时它们只作为兜底存放区。");
 
-                settings.desktopTarget = config.Define("desktop_target", DesktopAuto, "目标选择",
+                settings.fallbackArea = config.Define("fallback_area", TargetAuto, "目标选择",
                     () => "没有目标窗口时的去向",
-                    new[] { DesktopAuto, DesktopPlayerInventory, DesktopBackInventory, DesktopFrontCounter, DesktopShowcase },
-                    () => "没有打开任何机器、工具或容器窗口时，物品存放的位置。选“自动”时：店内存入随身背包，店外存入夜间地面。");
+                    new[] { TargetAuto, TargetStorage, TargetDesk, TargetShowcase, TargetFrontCounter, TargetNightGround },
+                    () => "没有打开任何机器、工具或容器窗口时，物品存放的位置。选“自动”时：店内 仓库→桌面→展示柜→前台柜台；店外 夜间地面优先。");
 
-                settings.machineReturnTarget = config.Define("machine_return_target", DesktopBackInventory, "目标选择",
+                settings.machineOutputArea = config.Define("machine_output_area", TargetStorage, "目标选择",
                     () => "从机器取出物品的去向",
-                    new[] { DesktopBackInventory, DesktopPlayerInventory, DesktopFrontCounter, DesktopShowcase },
-                    () => "双击机器或工具窗口里的物品时，物品存放的位置。默认存入后场仓库，满了会自动改投随身背包。");
+                    new[] { TargetAuto, TargetStorage, TargetDesk, TargetShowcase, TargetFrontCounter },
+                    () => "双击机器或工具窗口里的物品时，物品存放的位置。默认直接进仓库，满了自动改投桌面。");
             }
             catch (Exception e)
             {
@@ -139,20 +148,28 @@ namespace SmartQuickTransfer.Core
                 return fallback;
             }
 
-            // Values written by 1.1 and earlier were English; accept and translate them so an
-            // existing config file keeps working after the labels became Chinese.
+            // The first builds mapped these labels to the wrong panels and used English values
+            // before that. Translate every legacy spelling to the panel it really points at.
             switch (value)
             {
                 case "auto":
-                    return DesktopAuto;
+                    return TargetAuto;
                 case "player_inventory":
-                    return DesktopPlayerInventory;
+                    return TargetStorage;
                 case "back_inventory":
-                    return DesktopBackInventory;
+                    return TargetDesk;
                 case "front_counter":
-                    return DesktopFrontCounter;
+                    return TargetFrontCounter;
                 case "showcase":
-                    return DesktopShowcase;
+                    return TargetShowcase;
+                case "随身背包":
+                    return TargetStorage;
+                case "后场仓库":
+                    return TargetDesk;
+                case "前台":
+                    return TargetFrontCounter;
+                case "地面":
+                    return TargetNightGround;
                 default:
                     return value;
             }

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Manifest>
   <ID>smart_quick_transfer</ID>
-  <Name>Smart Quick Transfer</Name>
-  <Author>weijb</Author>
-  <ModVersion>1.2.0</ModVersion>
+  <Name>凌波丽海苔的智能双击</Name>
+  <Author>凌波丽海苔</Author>
+  <ModVersion>1.2.2</ModVersion>
   <Description>双击物品，自动投放到最近使用过的机器、工具或容器窗口；没有可用窗口时投放到默认存放区。Double-click an item to send it to the most recently used machine, tool or container window, with a fallback to the default storage area.</Description>
   <GameVersions>
     <Version>0.46</Version>
