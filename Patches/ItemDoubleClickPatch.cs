@@ -71,21 +71,10 @@ namespace SmartQuickTransfer.Patches
                     return true;
                 }
 
-                if (!machinery && contentWindow == null)
+                if (!machinery && contentWindow == null
+                    && newItem.MayToggleSlotItem() && newItem.CanToggleSlotItem())
                 {
-                    bool mayActivate = newItem.MayActivateSlotItem();
-                    if (mayActivate && newItem.CanActivateSlotItem())
-                    {
-                        return true;
-                    }
-                    if (!mayActivate && newItem.MaySelectSlotItem() && newItem.CanSelectSlotItem())
-                    {
-                        return true;
-                    }
-                    if (!mayActivate && newItem.MayToggleSlotItem() && newItem.CanToggleSlotItem())
-                    {
-                        return true;
-                    }
+                    return true;
                 }
 
                 if (newItem.parentInventory == null)

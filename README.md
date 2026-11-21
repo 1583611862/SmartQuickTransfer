@@ -36,9 +36,9 @@
 | 可鉴定 / 可检视物品（`APPRAISAL_ITEM` / `INSPECTABLE_TAG` 标签，或带查看窗口） | 原版鉴定 / 查看行为，不转移 | 无（始终保留） |
 | 彩票 / 刮刮乐（`LOTTERY_TICKET_TAG` / `SCRATCHER_TAG` / `LOTTERY` 类型） | 原版兑奖 / 刮开界面，不转移 | 无（始终保留） |
 | 文档类（`DOCUMENT` 标签或类型，含治安部档案 `intel_sec`） | 全部交回原版：带窗口的档案盒双击开窗，治安部档案等纯文档双击进入阅读界面；不转移 | 无（始终保留） |
-| 其他有原生双击动作的物品（可激活 / 可选中 / 可切换） | 原版使用 / 装备 / 切换行为，不转移 | 无（始终保留） |
+| 切换类物品（`MayToggleSlotItem` / `CanToggleSlotItem`，如灯具、水容器、外观切换） | 原版切换状态，不转移 | 无（始终保留） |
 
-原生动作判据直接复用游戏的 `MayActivateSlotItem` / `CanActivateSlotItem`、`MaySelectSlotItem` / `CanSelectSlotItem`、`MayToggleSlotItem` / `CanToggleSlotItem`；仅对无自带窗口、非机器的物品生效。带窗口的机器 / 容器仍由配置开关决定，未被此规则覆盖。
+切换判据直接复用游戏的 `MayToggleSlotItem` / `CanToggleSlotItem`，仅对无自带窗口、非机器的物品生效。消耗品（药品、烟酒、食品、疫苗等）与使用类物品（拆弹、拆分、开机器窗口、对话选项、进房间等）以及可选中装备的工具，双击参与快速转移；兑奖 / 刮开与文档阅读仍保留原版。带窗口的机器 / 容器仍由配置开关决定。
 
 垃圾场（夜间地面）地面上的物品双击后进入该面板的**背包 / 左手 / 右手**口袋，不再投放到仓库；口袋都放不下时物品留在原位。
 
