@@ -61,6 +61,49 @@ namespace SmartQuickTransfer.Transfer
             return null;
         }
 
+        internal static GameInventory ResolveAfterhourPocket(GameItem item)
+        {
+            if (item == null)
+            {
+                return null;
+            }
+
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null)
+            {
+                return null;
+            }
+
+            GameInventory[] candidates =
+            {
+                entry.afterhourPocketSlotInvBackpack,
+                entry.afterhourPocketSlotInvLeft,
+                entry.afterhourPocketSlotInvRight
+            };
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                GameInventory candidate = candidates[i];
+                if (candidate == null || candidate == item.parentInventory || IsInsideItem(candidate, item))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (candidate.TryFindOneValidInventorySlot(item) != null)
+                    {
+                        return candidate;
+                    }
+                }
+                catch (Exception e)
+                {
+                    ModEntry.LogError("afterhour pocket slot check failed: " + e.Message);
+                }
+            }
+
+            return null;
+        }
+
         internal static GameInventory ResolveDesk(GameItem item)
         {
             if (item == null)
@@ -151,6 +194,18 @@ namespace SmartQuickTransfer.Transfer
                 if (ReferenceEquals(inventory, entry.afterhourInventory))
                 {
                     return TransferSettings.TargetNightGround;
+                }
+                if (ReferenceEquals(inventory, entry.afterhourPocketSlotInvBackpack))
+                {
+                    return "背包";
+                }
+                if (ReferenceEquals(inventory, entry.afterhourPocketSlotInvLeft))
+                {
+                    return "左手";
+                }
+                if (ReferenceEquals(inventory, entry.afterhourPocketSlotInvRight))
+                {
+                    return "右手";
                 }
             }
 

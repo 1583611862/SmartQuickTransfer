@@ -17,6 +17,15 @@ namespace SmartQuickTransfer.Core
 
             try
             {
+                EmporiumEntry entry = EmporiumEntry.Instance;
+                bool fromGround = entry != null
+                    && ReferenceEquals(sourceWindow, entry.afterhourWindow)
+                    && ReferenceEquals(item.parentInventory, entry.afterhourInventory);
+                if (fromGround)
+                {
+                    return TransferToAfterhourPocket(item, sourceWindow, capture);
+                }
+
                 TransferSettings settings = ModEntry.Settings;
                 if (settings != null && settings.CustomerDemandDeskPriority
                     && CustomerDemandResolver.WantsItem(item))
@@ -79,6 +88,31 @@ namespace SmartQuickTransfer.Core
                 + WindowActivityManager.Describe(sourceWindow) + "' into '"
                 + WindowActivityManager.Describe(target) + "' (" + MachineSlotResolver.Describe(target)
                 + "); item now in " + DescribeFinalArea(item) + ".");
+            return TransferOutcome.MovedToWindow;
+        }
+
+        private static TransferOutcome TransferToAfterhourPocket(GameItem item, PixelWindow sourceWindow, FlightCapture capture)
+        {
+            GameInventory pocket = DesktopTransfer.ResolveAfterhourPocket(item);
+            if (pocket == null)
+            {
+                ModEntry.LogInfo("afterhour backpack and pockets cannot accept " + DescribeItem(item) + "; item kept in place.");
+                return TransferOutcome.RejectedByTarget;
+            }
+
+            SlotMarker slot = FindSlot(pocket, item);
+            int requested = item.unitCount;
+            int moved = DesktopTransfer.MoveInto(pocket, item, sourceWindow);
+            if (moved <= 0)
+            {
+                ModEntry.LogError("afterhour pocket transfer of " + DescribeItem(item) + " moved nothing; item kept in place.");
+                return TransferOutcome.Failed;
+            }
+
+            TransferAnimation.Play(capture, item, slot, ShouldHideSource(capture, item, moved, requested));
+
+            ModEntry.LogInfo("moved " + moved + " x " + DescribeItem(item) + " from the dumping ground into "
+                + DesktopTransfer.DescribeArea(pocket) + "; item now in " + DescribeFinalArea(item) + ".");
             return TransferOutcome.MovedToWindow;
         }
 

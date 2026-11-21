@@ -17,6 +17,19 @@ namespace SmartQuickTransfer.Patches
                 {
                     return true;
                 }
+                if (newItem.IsTag(LotteryHelper.LOTTERY_TICKET_TAG)
+                    || newItem.IsTag(ScratcherHelper.SCRATCHER_TAG)
+                    || newItem.IsTag(LotteryHelper.LOTTERY_PAPER_TAG)
+                    || newItem.IsGameItemType("LOTTERY")
+                    || newItem.identifier == "scratcher_stack")
+                {
+                    return true;
+                }
+                EmporiumEntry emporium = EmporiumEntry.Instance;
+                if (emporium != null && ReferenceEquals(newItem.parentInventory, emporium.trashcanInvElement))
+                {
+                    return true;
+                }
 
                 TransferSettings settings = ModEntry.Settings;
                 if (settings != null && !settings.Enabled)
