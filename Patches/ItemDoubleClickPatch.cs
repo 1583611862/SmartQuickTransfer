@@ -31,6 +31,15 @@ namespace SmartQuickTransfer.Patches
                 {
                     return true;
                 }
+                if (newItem.IsTag(AppraisalHelper.APPRAISAL_ITEM)
+                    || newItem.IsTag(InspectableHelper.INSPECTABLE_TAG))
+                {
+                    return true;
+                }
+                if (newItem.examineWindow != null)
+                {
+                    return true;
+                }
 
                 PixelWindow contentWindow = newItem.contentWindow;
                 bool machinery = MachineSlotResolver.IsMachineItem(newItem);

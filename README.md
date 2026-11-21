@@ -3,7 +3,7 @@
 一个用于 Unity 游戏 **Probably Stolen**（版本 0.46）的独立 MOD。它拦截"双击物品"这一操作，把物品快速投放到**最近使用过的机器 / 工具 / 容器窗口**；从机器中取出物品时则回到存放区；没有可用窗口时投放到默认存放区，并播放一段物品飞行的视觉动画。
 
 - **MOD ID**：`smart_quick_transfer`
-- **版本**：1.2.3
+- **版本**：1.2.4
 - **程序集**：`SmartQuickTransfer.dll`
 - **目标框架**：.NET Standard 2.1 / C# 7.3（Harmony 2.4.2）
 - **依赖**：无。不需要任何其他 MOD 或前置框架
@@ -33,6 +33,7 @@
 | 普通物品（电池、矿石、产物、零件…） | 快速转移 | `enabled` |
 | 机器 / 工具本体 | 原版打开窗口 | `keep_machine_double_click`（默认开） |
 | 背包、箱子等自带窗口的容器 | 原版打开窗口 | `keep_container_double_click`（默认开） |
+| 可鉴定 / 可检视物品（`APPRAISAL_ITEM` / `INSPECTABLE_TAG` 标签，或带查看窗口） | 原版鉴定 / 查看行为，不转移 | 无（始终保留） |
 
 机器识别采用三重判据（`MACHINE_RECHARGABLE_TAG` / `STANDARD_MACHINE_TAG` 标签、`WindowStyle.Machinery` 样式、`MachineryPanelRow` 内容），任一命中即视为机器。
 
