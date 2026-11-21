@@ -25,6 +25,12 @@ namespace SmartQuickTransfer.Patches
                 {
                     return true;
                 }
+                if (newItem.identifier == "intel_sec"
+                    || newItem.IsTag("DOCUMENT")
+                    || newItem.IsGameItemType("DOCUMENT"))
+                {
+                    return true;
+                }
                 EmporiumEntry emporium = EmporiumEntry.Instance;
                 if (emporium != null && ReferenceEquals(newItem.parentInventory, emporium.trashcanInvElement))
                 {
@@ -63,6 +69,23 @@ namespace SmartQuickTransfer.Patches
                 if (!machinery && contentWindow != null && settings != null && settings.PreserveContainerOpen)
                 {
                     return true;
+                }
+
+                if (!machinery && contentWindow == null)
+                {
+                    bool mayActivate = newItem.MayActivateSlotItem();
+                    if (mayActivate && newItem.CanActivateSlotItem())
+                    {
+                        return true;
+                    }
+                    if (!mayActivate && newItem.MaySelectSlotItem() && newItem.CanSelectSlotItem())
+                    {
+                        return true;
+                    }
+                    if (!mayActivate && newItem.MayToggleSlotItem() && newItem.CanToggleSlotItem())
+                    {
+                        return true;
+                    }
                 }
 
                 if (newItem.parentInventory == null)

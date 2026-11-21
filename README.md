@@ -3,7 +3,7 @@
 一个用于 Unity 游戏 **Probably Stolen**（版本 0.46）的独立 MOD。它拦截"双击物品"这一操作，把物品快速投放到**最近使用过的机器 / 工具 / 容器窗口**；从机器中取出物品时则回到存放区；没有可用窗口时投放到默认存放区，并播放一段物品飞行的视觉动画。
 
 - **MOD ID**：`smart_quick_transfer`
-- **版本**：1.3.1
+- **版本**：1.3.2
 - **程序集**：`SmartQuickTransfer.dll`
 - **目标框架**：.NET Standard 2.1 / C# 7.3（Harmony 2.4.2）
 - **依赖**：无。不需要任何其他 MOD 或前置框架
@@ -35,6 +35,10 @@
 | 背包、箱子等自带窗口的容器 | 原版打开窗口 | `keep_container_double_click`（默认开） |
 | 可鉴定 / 可检视物品（`APPRAISAL_ITEM` / `INSPECTABLE_TAG` 标签，或带查看窗口） | 原版鉴定 / 查看行为，不转移 | 无（始终保留） |
 | 彩票 / 刮刮乐（`LOTTERY_TICKET_TAG` / `SCRATCHER_TAG` / `LOTTERY` 类型） | 原版兑奖 / 刮开界面，不转移 | 无（始终保留） |
+| 文档类（`DOCUMENT` 标签或类型，含治安部档案 `intel_sec`） | 全部交回原版：带窗口的档案盒双击开窗，治安部档案等纯文档双击进入阅读界面；不转移 | 无（始终保留） |
+| 其他有原生双击动作的物品（可激活 / 可选中 / 可切换） | 原版使用 / 装备 / 切换行为，不转移 | 无（始终保留） |
+
+原生动作判据直接复用游戏的 `MayActivateSlotItem` / `CanActivateSlotItem`、`MaySelectSlotItem` / `CanSelectSlotItem`、`MayToggleSlotItem` / `CanToggleSlotItem`；仅对无自带窗口、非机器的物品生效。带窗口的机器 / 容器仍由配置开关决定，未被此规则覆盖。
 
 垃圾场（夜间地面）地面上的物品双击后进入该面板的**背包 / 左手 / 右手**口袋，不再投放到仓库；口袋都放不下时物品留在原位。
 
