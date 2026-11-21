@@ -61,6 +61,36 @@ namespace SmartQuickTransfer.Transfer
             return null;
         }
 
+        internal static GameInventory ResolveDesk(GameItem item)
+        {
+            if (item == null)
+            {
+                return null;
+            }
+
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null)
+            {
+                return null;
+            }
+
+            GameInventory desk = entry.backInvinvElement;
+            if (desk == null || desk == item.parentInventory || IsInsideItem(desk, item))
+            {
+                return null;
+            }
+
+            try
+            {
+                return desk.TryFindOneValidInventorySlot(item) != null ? desk : null;
+            }
+            catch (Exception e)
+            {
+                ModEntry.LogError("customer-demand desk slot check failed: " + e.Message);
+                return null;
+            }
+        }
+
         internal static int MoveInto(GameInventory destination, GameItem item, PixelWindow source)
         {
             if (destination == null || item == null)

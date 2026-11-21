@@ -17,6 +17,19 @@ namespace SmartQuickTransfer.Core
 
             try
             {
+                TransferSettings settings = ModEntry.Settings;
+                if (settings != null && settings.CustomerDemandDeskPriority
+                    && CustomerDemandResolver.WantsItem(item))
+                {
+                    GameInventory desk = DesktopTransfer.ResolveDesk(item);
+                    if (desk != null)
+                    {
+                        return TransferToCustomerDesk(item, sourceWindow, desk, capture);
+                    }
+                    ModEntry.LogInfo("customer wants " + DescribeItem(item)
+                        + " but the desk has no valid slot; using the normal route.");
+                }
+
                 // Anything taken out of a machine or tool goes back to storage, never to the window
                 // that happens to have been focused last. Fixed machinery panels (night ground,
                 // vending slots) are storage areas rather than machines and keep the normal routing.
@@ -67,6 +80,27 @@ namespace SmartQuickTransfer.Core
                 + WindowActivityManager.Describe(target) + "' (" + MachineSlotResolver.Describe(target)
                 + "); item now in " + DescribeFinalArea(item) + ".");
             return TransferOutcome.MovedToWindow;
+        }
+
+        private static TransferOutcome TransferToCustomerDesk(GameItem item, PixelWindow sourceWindow, GameInventory desk, FlightCapture capture)
+        {
+            SlotMarker slot = FindSlot(desk, item);
+            int requested = item.unitCount;
+            int moved = DesktopTransfer.MoveInto(desk, item, sourceWindow);
+            if (moved <= 0)
+            {
+                ModEntry.LogError("customer-demand transfer of " + DescribeItem(item)
+                    + " into the desk moved nothing; item kept in place.");
+                return TransferOutcome.Failed;
+            }
+
+            TransferAnimation.Play(capture, item, slot, ShouldHideSource(capture, item, moved, requested));
+
+            ModEntry.LogInfo("customer wants " + DescribeItem(item) + "; moved " + moved + " x "
+                + DescribeItem(item) + " from '" + WindowActivityManager.Describe(sourceWindow)
+                + "' into " + DesktopTransfer.DescribeArea(desk) + "; item now in "
+                + DescribeFinalArea(item) + ".");
+            return TransferOutcome.MovedToCustomerDesk;
         }
 
         private static TransferOutcome TransferToFallback(GameItem item, PixelWindow sourceWindow, FlightCapture capture, bool fromMachine)

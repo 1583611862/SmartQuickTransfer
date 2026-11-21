@@ -4,6 +4,7 @@ namespace SmartQuickTransfer.Core
     {
         NotHandled,
         MovedToWindow,
+        MovedToCustomerDesk,
         MovedToFallback,
         RejectedByTarget,
         Failed

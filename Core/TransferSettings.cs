@@ -21,6 +21,7 @@ namespace SmartQuickTransfer.Core
         private ConfigEntry<bool> preserveContainerOpen;
         private ConfigEntry<bool> preserveMachineOpen;
         private ConfigEntry<bool> includeStorePanels;
+        private ConfigEntry<bool> customerDemandDeskPriority;
         private ConfigEntry<string> fallbackArea;
         private ConfigEntry<string> machineOutputArea;
         private ConfigEntry<bool> animate;
@@ -46,6 +47,11 @@ namespace SmartQuickTransfer.Core
         internal bool IncludeStorePanels
         {
             get { return includeStorePanels != null && includeStorePanels.Value; }
+        }
+
+        internal bool CustomerDemandDeskPriority
+        {
+            get { return customerDemandDeskPriority == null || customerDemandDeskPriority.Value; }
         }
 
         /// <summary>Where an item goes when no movable window can take it.</summary>
@@ -123,6 +129,10 @@ namespace SmartQuickTransfer.Core
                 settings.includeStorePanels = config.Define("include_store_panels", false, "目标选择",
                     () => "常驻存放面板也可作为目标",
                     () => "开启后，仓库、桌面、展示柜、前台柜台、夜间地面这些常驻面板本身也能成为转移目标；关闭时它们只作为兜底存放区。");
+
+                settings.customerDemandDeskPriority = config.Define("customer_demand_desk_priority", true, "目标选择",
+                    () => "顾客需要的物品优先放桌面",
+                    () => "开启时，若当前顾客想购买被双击的物品，会优先把它投放到桌面柜台，方便直接成交；桌面放不下时仍按原有规则处理。");
 
                 settings.fallbackArea = config.Define("fallback_area", TargetAuto, "目标选择",
                     () => "没有目标窗口时的去向",
