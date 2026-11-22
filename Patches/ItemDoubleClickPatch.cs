@@ -35,6 +35,11 @@ namespace SmartQuickTransfer.Patches
                 {
                     return true;
                 }
+                // 鱼饲料（工业鱼饲料 / 沟流颗粒）双击原版行为是拆分，交回原版逻辑，不执行快捷转移。
+                if (IndustrialFishFeedHelper.IsFeed(newItem) || GutterflowPelletHelper.IsPellet(newItem))
+                {
+                    return true;
+                }
                 EmporiumEntry emporium = EmporiumEntry.Instance;
                 if (emporium != null && ReferenceEquals(newItem.parentInventory, emporium.trashcanInvElement))
                 {
