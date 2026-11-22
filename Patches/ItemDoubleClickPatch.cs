@@ -31,6 +31,10 @@ namespace SmartQuickTransfer.Patches
                 {
                     return true;
                 }
+                if (newItem.identifier == BlackLampHelper.BLACK_LAMP_ID)
+                {
+                    return true;
+                }
                 EmporiumEntry emporium = EmporiumEntry.Instance;
                 if (emporium != null && ReferenceEquals(newItem.parentInventory, emporium.trashcanInvElement))
                 {
