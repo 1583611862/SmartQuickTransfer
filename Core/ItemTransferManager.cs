@@ -89,6 +89,159 @@ namespace SmartQuickTransfer.Core
         }
 
         /// <summary>
+        /// Bulk path for a band selection. This mirrors the base game's group placement: one
+        /// destination is chosen once (using the double-clicked item as representative), then the
+        /// whole selection is committed into that single inventory with the game's own placement
+        /// primitive. It is one decision and one batch commit - not N independent smart transfers
+        /// that each pick their own target and play their own trace.
+        /// </summary>
+        internal static int TransferBatch(List<GameItem> items, PixelWindow sourceWindow, string traceId)
+        {
+            if (items == null || items.Count == 0)
+            {
+                return 0;
+            }
+            PreferenceLearningService.TickSafeSave();
+            Branch(traceId, "batch");
+
+            GameItem representative = items[0];
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            TransferSettings settings = ModEntry.Settings;
+
+            // 1) Choose one shared destination, using the same decision as a single double-click
+            //    but evaluated exactly once from the representative item.
+            GameInventory destination = null;
+            PixelWindow destinationWindow = null;
+            string predictedKey = null;
+
+            bool fromGround = entry != null
+                && ReferenceEquals(sourceWindow, entry.afterhourWindow)
+                && ReferenceEquals(representative.parentInventory, entry.afterhourInventory);
+
+            if (fromGround)
+            {
+                destination = DesktopTransfer.ResolveAfterhourPocket(representative);
+                destinationWindow = entry.afterhourWindow;
+            }
+            else
+            {
+                if (settings != null && settings.CustomerDemandDeskPriority
+                    && CustomerDemandResolver.WantsItem(representative))
+                {
+                    GameInventory desk = DesktopTransfer.ResolveDesk(representative);
+                    if (desk != null)
+                    {
+                        destination = desk;
+                        destinationWindow = entry != null ? entry.backInvWindow : null;
+                    }
+                }
+
+                bool fromMachine = MachineSlotResolver.IsMachineryWindow(sourceWindow)
+                    && !WindowActivityManager.IsStorePanel(sourceWindow);
+
+                if (destination == null && !fromMachine)
+                {
+                    List<TargetCandidate> candidates =
+                        WindowActivityManager.GetEligibleTargets(representative, sourceWindow, traceId);
+                    if (candidates != null && candidates.Count > 0)
+                    {
+                        List<TargetCandidate> ranked =
+                            TargetScoringService.ScoreAndRank(representative, candidates, traceId);
+                        if (ranked.Count > 0 && ranked[0].Inventory != null)
+                        {
+                            destination = ranked[0].Inventory;
+                            destinationWindow = ranked[0].Window;
+                            predictedKey = ranked[0].TargetKey;
+                        }
+                    }
+                }
+
+                if (destination == null)
+                {
+                    destination = DesktopTransfer.Resolve(representative, sourceWindow, fromMachine);
+                    if (destination != null)
+                    {
+                        destinationWindow = GraphUtils.FindParentType<PixelWindow>(destination);
+                    }
+                }
+            }
+
+            if (destination == null)
+            {
+                ModEntry.LogInfo("band double-click: no destination accepts the selection; items kept in place.");
+                TransferDiagnostics.TransferResult(traceId, "n/a_batch", "n/a_batch", 0, 0,
+                    "RejectedByTarget", false, false, "unknown", "unavailable");
+                return 0;
+            }
+            if (string.IsNullOrEmpty(predictedKey))
+            {
+                predictedKey = StableIdentityResolver.ResolveTarget(destinationWindow, destination);
+            }
+
+            // 2) Commit the whole selection into that one destination in a single guarded batch,
+            //    using the same placement primitive the base game uses for group drag-drop.
+            int totalRequested = 0;
+            int totalMoved = 0;
+            AutomationTransferGuard.Begin();
+            try
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    GameItem item = items[i];
+                    if (item == null || item.parentInventory == null)
+                    {
+                        continue;
+                    }
+                    int requested = item.unitCount;
+                    if (requested <= 0)
+                    {
+                        continue;
+                    }
+                    totalRequested += requested;
+
+                    GameInventory sourceInventory = item.parentInventory;
+                    string itemKey = StableIdentityResolver.ResolveItem(item);
+                    string sourceKey = StableIdentityResolver.ResolveInventoryOnly(sourceInventory);
+                    FlightCapture capture = TransferAnimation.Capture(item);
+
+                    int leftover = GraphUtils.TryAcceptAll(destination, item);
+                    int moved = requested - leftover;
+                    if (moved <= 0)
+                    {
+                        continue;
+                    }
+                    totalMoved += moved;
+
+                    try
+                    {
+                        item.Validate();
+                    }
+                    catch (Exception e)
+                    {
+                        ModEntry.LogError("validating a batch-moved item failed: " + e.Message);
+                    }
+
+                    TransferAnimation.Play(capture, item, null, false);
+                    PredictionLedger.Record(traceId, itemKey, item, sourceInventory, destination,
+                        sourceKey, predictedKey, requested, moved);
+                }
+            }
+            finally
+            {
+                AutomationTransferGuard.End();
+            }
+
+            ContainerTransfer.Refresh(destinationWindow, sourceWindow);
+            ModEntry.LogInfo("band double-click moved " + totalMoved + " unit(s) into '"
+                + DesktopTransfer.DescribeArea(destination) + "' as one batch.");
+            TransferDiagnostics.TransferResult(traceId, predictedKey, predictedKey,
+                totalRequested, totalMoved, totalMoved > 0 ? "success" : "failed",
+                totalMoved > 0 && totalMoved < totalRequested, totalMoved <= 0,
+                totalMoved > 0 ? DesktopTransfer.DescribeArea(destination) : "unknown", "unavailable");
+            return totalMoved;
+        }
+
+        /// <summary>
         /// Collects all eligible candidates, ranks them, then tries them in order. Only a complete
         /// failure (nothing moved) advances to the next candidate; a partial move stops immediately.
         /// Behaviour is unchanged from the pre-diagnostic version; logging was added around it.
