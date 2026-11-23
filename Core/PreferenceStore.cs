@@ -12,7 +12,8 @@ namespace SmartQuickTransfer.Core
     /// inventories, temporary predictions (class A) or per-action logs.
     ///
     /// File safety:
-    ///   - write to a temporary file, validate it, then atomically replace the main file;
+    ///   - write to a temporary file, validate it, then replace the main file;
+    ///   - all access goes through capability-free ModHelper mod-data APIs (no System.IO);
     ///   - keep the previous valid file as a .bak before overwriting;
     ///   - on load failure try the backup first; if both are corrupt, PRESERVE the original files
     ///     (never overwrite the only copy) and fall back to an empty model in memory;
@@ -142,7 +143,7 @@ namespace SmartQuickTransfer.Core
         }
 
         /// <summary>
-        /// Persists a snapshot with a backup + atomic replace. Failures are reported, never thrown.
+        /// Persists a snapshot with a backup + validate-then-replace. Failures are reported, never thrown.
         /// The main and backup files are preserved when any step fails.
         /// </summary>
         internal static SaveResult Save(List<ItemPreference> model)
@@ -196,39 +197,31 @@ namespace SmartQuickTransfer.Core
                 file.items = items.ToArray();
                 string json = JsonUtility.ToJson(file, true);
 
-                string finalPath = SafePath(FileName);
-                string backupPath = SafePath(BackupFileName);
-                string tempPath = SafePath(TempFileName);
-                if (finalPath == null || backupPath == null || tempPath == null)
+                // 1) keep the previous valid main file as a backup (capability-free ModData API).
+                string previous = ModHelper.ReadModDataFileText(ModEntry.ModId, FileName);
+                if (previous != null)
                 {
-                    result.Reason = "path_unavailable";
-                    return result;
-                }
-
-                // 1) keep the previous valid main file as a backup.
-                if (System.IO.File.Exists(finalPath))
-                {
-                    System.IO.File.Copy(finalPath, backupPath, true);
+                    ModHelper.WriteModDataFileText(ModEntry.ModId, BackupFileName, previous);
                 }
                 // 2) write the candidate to a temporary file.
                 ModHelper.WriteModDataFileText(ModEntry.ModId, TempFileName, json);
                 // 3) validate the temporary file before replacing anything.
-                string tempText = System.IO.File.ReadAllText(tempPath);
+                string tempText = ModHelper.ReadModDataFileText(ModEntry.ModId, TempFileName);
                 List<ItemPreference> probe;
                 LoadResult probeResult = new LoadResult();
                 if (!TryParse(tempText, out probe, probeResult))
                 {
                     result.Reason = "temp_validation_failed";
-                    TryDelete(tempPath);
+                    TryDelete(TempFileName);
                     return result;
                 }
-                // 4) atomic replace of the main file only after successful validation.
-                System.IO.File.Copy(tempPath, finalPath, true);
-                TryDelete(tempPath);
+                // 4) replace the main file only after successful validation.
+                ModHelper.WriteModDataFileText(ModEntry.ModId, FileName, tempText);
+                TryDelete(TempFileName);
 
                 result.Success = true;
-                System.IO.FileInfo info = new System.IO.FileInfo(finalPath);
-                result.FileBytes = info.Exists ? info.Length : -1;
+                byte[] written = ModHelper.ReadModDataFileBytes(ModEntry.ModId, FileName);
+                result.FileBytes = written != null ? written.LongLength : -1;
             }
             catch (Exception e)
             {
@@ -253,8 +246,8 @@ namespace SmartQuickTransfer.Core
             SaveResult result = Save(empty);
             if (result.Success)
             {
-                TryDelete(SafePath(BackupFileName));
-                TryDelete(SafePath(TempFileName));
+                TryDelete(BackupFileName);
+                TryDelete(TempFileName);
             }
             return result;
         }
@@ -332,7 +325,8 @@ namespace SmartQuickTransfer.Core
         {
             try
             {
-                return System.IO.Path.Combine(ModHelper.GetModDataFolder(ModEntry.ModId), fileName);
+                string folder = ModHelper.GetModDataFolder(ModEntry.ModId);
+                return folder == null ? null : folder + "/" + fileName;
             }
             catch (Exception)
             {
@@ -340,13 +334,13 @@ namespace SmartQuickTransfer.Core
             }
         }
 
-        private static void TryDelete(string path)
+        private static void TryDelete(string relativeFileName)
         {
             try
             {
-                if (!string.IsNullOrEmpty(path) && System.IO.File.Exists(path))
+                if (!string.IsNullOrEmpty(relativeFileName))
                 {
-                    System.IO.File.Delete(path);
+                    ModHelper.DeleteModDataFile(ModEntry.ModId, relativeFileName);
                 }
             }
             catch (Exception)
