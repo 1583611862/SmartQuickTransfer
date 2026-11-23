@@ -81,6 +81,15 @@ namespace SmartQuickTransfer.Visuals
                 capture.SourceCamera = camera;
                 capture.ScreenSize = new Vector2(Mathf.Abs(max.x - min.x), Mathf.Abs(max.y - min.y));
                 capture.Valid = capture.ScreenSize.x >= 1f && capture.ScreenSize.y >= 1f;
+
+                // Content-visible items (a bucket holding water, a container showing its payload,
+                // ...) are drawn by the game as extra sprite layers sibled with the background
+                // under the same rotator. The base sprite alone is just the empty container, so
+                // snapshot every visible overlay and replay it on the ghost.
+                if (capture.Valid)
+                {
+                    CaptureOverlays(capture, rect, camera);
+                }
             }
             catch (Exception e)
             {
@@ -89,6 +98,85 @@ namespace SmartQuickTransfer.Visuals
             }
 
             return capture;
+        }
+
+        /// <summary>
+        /// Collects the extra sprite layers the game stacks on top of an item's base icon to show
+        /// its contents (water in a bucket, payload in a container, ...). They live as siblings of
+        /// the background directly under the rotator. Everything is stored as a screen-space
+        /// snapshot relative to the background centre so the ghost can replay them verbatim.
+        /// </summary>
+        private static void CaptureOverlays(FlightCapture capture, RectTransform backgroundRect, Camera camera)
+        {
+            try
+            {
+                Transform rotator = backgroundRect.parent;
+                if (rotator == null)
+                {
+                    return;
+                }
+
+                Vector2[] backgroundCorners = new Vector2[4];
+                Vector3[] worldCorners = new Vector3[4];
+                backgroundRect.GetWorldCorners(worldCorners);
+                for (int c = 0; c < 4; c++)
+                {
+                    backgroundCorners[c] = RectTransformUtility.WorldToScreenPoint(camera, worldCorners[c]);
+                }
+                Vector2 backgroundCentre = (backgroundCorners[0] + backgroundCorners[2]) * 0.5f;
+
+                for (int i = 0; i < rotator.childCount; i++)
+                {
+                    RectTransform layerRect = rotator.GetChild(i) as RectTransform;
+                    if (layerRect == null || ReferenceEquals(layerRect, backgroundRect))
+                    {
+                        continue;
+                    }
+                    GameObject layerObject = layerRect.gameObject;
+                    if (!layerObject.activeInHierarchy)
+                    {
+                        continue;
+                    }
+
+                    Image layerImage = layerObject.GetComponent<Image>();
+                    if (layerImage == null || !layerImage.enabled || layerImage.sprite == null)
+                    {
+                        continue;
+                    }
+
+                    // Corner 0/2 form the local bounding diagonal. When the layer is rotated the
+                    // world AABB is no longer its true size, so derive the unrotated pixel size
+                    // from the local rect scaled into world units instead. The centre is the mean
+                    // of all four corners, which is rotation-independent.
+                    layerRect.GetWorldCorners(worldCorners);
+                    Vector2 screen0 = RectTransformUtility.WorldToScreenPoint(camera, worldCorners[0]);
+                    Vector2 screen1 = RectTransformUtility.WorldToScreenPoint(camera, worldCorners[1]);
+                    Vector2 screen2 = RectTransformUtility.WorldToScreenPoint(camera, worldCorners[2]);
+                    Vector2 screen3 = RectTransformUtility.WorldToScreenPoint(camera, worldCorners[3]);
+                    Vector2 centre = (screen0 + screen1 + screen2 + screen3) * 0.25f;
+                    float worldScaleX = Mathf.Abs(layerRect.lossyScale.x);
+                    float worldScaleY = Mathf.Abs(layerRect.lossyScale.y);
+                    Vector2 size = new Vector2(layerRect.rect.width * worldScaleX, layerRect.rect.height * worldScaleY);
+                    if (size.x < 1f || size.y < 1f)
+                    {
+                        continue;
+                    }
+
+                    FlightOverlayLayer layer = new FlightOverlayLayer();
+                    layer.Sprite = layerImage.sprite;
+                    layer.Color = layerImage.color;
+                    layer.ScreenOffset = centre - backgroundCentre;
+                    layer.ScreenSize = size;
+                    layer.RotationZ = layerRect.rotation.eulerAngles.z;
+                    layer.ScaleX = layerRect.lossyScale.x < 0f ? -1f : 1f;
+                    layer.ScaleY = layerRect.lossyScale.y < 0f ? -1f : 1f;
+                    capture.Overlays.Add(layer);
+                }
+            }
+            catch (Exception e)
+            {
+                ModEntry.LogError("could not capture the item content overlays: " + e.Message);
+            }
         }
 
         internal static void Play(FlightCapture capture, GameItem item, SlotMarker slot, bool hideSource)
@@ -284,8 +372,58 @@ namespace SmartQuickTransfer.Visuals
             group.blocksRaycasts = false;
             group.interactable = false;
 
+            AddContentOverlays(rect, capture, alpha);
+
             UnityEngine.Object.Destroy(go, SafetyLifetime);
             return go;
+        }
+
+        /// <summary>
+        /// Rebuilds the item's content layers (liquid in a bucket, payload in a container, ...)
+        /// as children of the ghost. Without these the base sprite alone renders as an empty
+        /// container for every content-visible item.
+        /// </summary>
+        private static void AddContentOverlays(RectTransform ghostRect, FlightCapture capture, float alpha)
+        {
+            if (capture.Overlays == null || capture.Overlays.Count == 0)
+            {
+                return;
+            }
+
+            // The flight canvas has no CanvasScaler, so screen pixels map 1:1 to local units;
+            // divide by its factor anyway so the snapshot stays correct if that ever changes.
+            float scaleFactor = flightCanvas == null ? 1f : Mathf.Max(0.0001f, flightCanvas.scaleFactor);
+
+            for (int i = 0; i < capture.Overlays.Count; i++)
+            {
+                FlightOverlayLayer layer = capture.Overlays[i];
+                if (layer.Sprite == null)
+                {
+                    continue;
+                }
+
+                GameObject overlay = new GameObject("SQT_FlightContent" + i,
+                    typeof(RectTransform), typeof(CanvasGroup), typeof(Image));
+                RectTransform overlayRect = overlay.GetComponent<RectTransform>();
+                overlayRect.SetParent(ghostRect, false);
+                overlayRect.anchorMin = new Vector2(0.5f, 0.5f);
+                overlayRect.anchorMax = new Vector2(0.5f, 0.5f);
+                overlayRect.pivot = new Vector2(0.5f, 0.5f);
+                overlayRect.sizeDelta = layer.ScreenSize / scaleFactor;
+                overlayRect.anchoredPosition = layer.ScreenOffset / scaleFactor;
+                overlayRect.localEulerAngles = new Vector3(0f, 0f, layer.RotationZ);
+                overlayRect.localScale = new Vector3(layer.ScaleX, layer.ScaleY, 1f);
+
+                Image overlayImage = overlay.GetComponent<Image>();
+                overlayImage.sprite = layer.Sprite;
+                overlayImage.color = new Color(layer.Color.r, layer.Color.g, layer.Color.b, alpha);
+                overlayImage.raycastTarget = false;
+                overlayImage.preserveAspect = false;
+
+                CanvasGroup overlayGroup = overlay.GetComponent<CanvasGroup>();
+                overlayGroup.blocksRaycasts = false;
+                overlayGroup.interactable = false;
+            }
         }
 
         private static RectTransform ResolveDestination(FlightCapture capture, GameItem item, SlotMarker slot)

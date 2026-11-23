@@ -3,7 +3,7 @@
 一个用于 Unity 游戏 **Probably Stolen**（版本 0.46）的独立 MOD。它拦截"双击物品"这一操作，把物品快速投放到**最近使用过的机器 / 工具 / 容器窗口**；从机器中取出物品时则回到存放区；没有可用窗口时投放到默认存放区，并播放一段物品飞行的视觉动画。
 
 - **MOD ID**：`smart_quick_transfer`
-- **版本**：1.3.4
+- **版本**：1.3.5
 - **程序集**：`SmartQuickTransfer.dll`
 - **目标框架**：.NET Standard 2.1 / C# 7.3（Harmony 2.4.2）
 - **依赖**：无。不需要任何其他 MOD 或前置框架
@@ -159,7 +159,7 @@ pwsh ./build.ps1 -CompilerDirectory "C:\path\to\roslyn\bincore"
 │   ├── MachineSlotResolver.cs          原生槽位校验 + 机器识别
 │   └── DesktopTransfer.cs              库存 / 回退区解析与投放
 ├── Visuals/
-│   ├── FlightCapture.cs                起点快照（图标、尺寸、世界坐标、相机、原容器）
+│   ├── FlightCapture.cs                起点快照（图标 + 内容物叠加层、尺寸、世界坐标、相机、原容器）
 │   ├── FlightDriver.cs                 逐帧驱动：贝塞尔曲线 + 缩放 + 落地高亮
 │   └── TransferAnimation.cs            Ghost 创建与启动
 └── Patches/
