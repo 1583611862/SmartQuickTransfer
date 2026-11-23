@@ -1,3 +1,4 @@
+using System;
 using SmartQuickTransfer.Core;
 
 namespace SmartQuickTransfer
@@ -18,10 +19,28 @@ namespace SmartQuickTransfer
         public void OnEnable()
         {
             LogInfo("enabled.");
+            try
+            {
+                PreferenceLearningService.Initialize();
+            }
+            catch (Exception e)
+            {
+                LogError("failed to initialise the learning model: " + e.Message);
+            }
         }
 
         public void OnDisable()
         {
+            try
+            {
+                // Final flush of aggregated preferences, then drop in-memory predictions.
+                PreferenceLearningService.Shutdown();
+                PredictionLedger.Clear();
+            }
+            catch (Exception e)
+            {
+                LogError("failed during shutdown: " + e.Message);
+            }
             LogInfo("disabled.");
         }
 

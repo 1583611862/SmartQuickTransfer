@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using SmartQuickTransfer.Transfer;
 
 namespace SmartQuickTransfer.Core
 {
@@ -100,6 +101,84 @@ namespace SmartQuickTransfer.Core
             }
 
             return best;
+        }
+
+        /// <summary>
+        /// Collects every eligible, slot-compatible destination for the item. This is the scoring
+        /// input that replaces the old single "most recent window" choice. Slot compatibility is
+        /// checked with the game's read-only TryFindOneValidInventorySlot - never by attempting a
+        /// real transfer, so collecting candidates has no side effects on any inventory.
+        /// </summary>
+        internal static List<TargetCandidate> GetEligibleTargets(GameItem item, PixelWindow sourceWindow)
+        {
+            List<TargetCandidate> result = new List<TargetCandidate>();
+            if (item == null)
+            {
+                return result;
+            }
+
+            WindowsHandler handler = WindowsHandler.current;
+            if (handler == null)
+            {
+                return result;
+            }
+            List<PixelWindow> windows = handler.visibleWindows;
+            if (windows == null || windows.Count == 0)
+            {
+                return result;
+            }
+
+            bool includeStorePanels = ModEntry.Settings != null && ModEntry.Settings.IncludeStorePanels;
+            int order = 0;
+            for (int i = 0; i < windows.Count; i++)
+            {
+                PixelWindow candidate = windows[i];
+                try
+                {
+                    if (candidate == null || ReferenceEquals(candidate, sourceWindow))
+                    {
+                        continue;
+                    }
+                    if (!IsEligibleTarget(candidate, includeStorePanels))
+                    {
+                        continue;
+                    }
+
+                    // Read-only native slot lookup; ResolveSlot only reads/validates, never moves.
+                    SlotMarker slot = MachineSlotResolver.FindValidSlot(candidate, item);
+                    if (slot == null)
+                    {
+                        continue;
+                    }
+
+                    GameInventory inventory = slot.inventory;
+                    TargetCandidate target = new TargetCandidate();
+                    target.Window = candidate;
+                    target.Slot = slot;
+                    target.Inventory = inventory;
+                    target.FocusStamp = candidate.focusStamp;
+                    target.OriginalOrder = order++;
+                    // Prefer the concrete inventory the slot belongs to: a window can expose
+                    // several inventories with different purposes.
+                    target.TargetKey = StableIdentityResolver.ResolveTarget(candidate, inventory);
+                    result.Add(target);
+                }
+                catch (Exception e)
+                {
+                    ModEntry.LogError("candidate scan skipped a window: " + e.Message);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Public wrapper used by StableIdentityResolver / affinity rules. Returns a stable area
+        /// key (仓库/桌面/...) for the fixed shop panels, or null for other windows.
+        /// </summary>
+        internal static string DescribeShopArea(PixelWindow window)
+        {
+            return DescribeArea(window);
         }
 
         internal static bool IsEligibleTarget(PixelWindow window, bool includeStorePanels)
