@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace SmartQuickTransfer.Core
 {
@@ -26,14 +27,21 @@ namespace SmartQuickTransfer.Core
         /// </summary>
         internal static List<TargetCandidate> ScoreAndRank(GameItem item, List<TargetCandidate> candidates)
         {
+            return ScoreAndRank(item, candidates, null);
+        }
+
+        /// <summary>Diagnostic-aware scoring. Computations are identical to the plain overload.</summary>
+        internal static List<TargetCandidate> ScoreAndRank(GameItem item, List<TargetCandidate> candidates, string traceId)
+        {
+            Stopwatch sw = Stopwatch.StartNew();
             List<TargetCandidate> result = candidates ?? new List<TargetCandidate>();
 
             // 1) Deterministic ordering by native focusStamp (descending), tie-broken by original
             //    collection order. Ranking is only over already-valid, slot-compatible candidates.
             result.Sort(CompareByRecency);
 
-            float itemLearningWeight = PreferenceLearningService.GetLearningWeight(
-                StableIdentityResolver.ResolveItem(item));
+            string itemKey = StableIdentityResolver.ResolveItem(item);
+            float itemLearningWeight = PreferenceLearningService.GetLearningWeight(itemKey);
 
             for (int rank = 0; rank < result.Count; rank++)
             {
@@ -42,13 +50,35 @@ namespace SmartQuickTransfer.Core
                 c.AffinityScore = ItemDestinationAffinityRules.Score(item, c.TargetKey);
                 float baseScore = RecencyWeight * c.RecencyScore + AffinityWeight * c.AffinityScore;
 
-                c.LearnedScore = PreferenceLearningService.GetPreference(
-                    StableIdentityResolver.ResolveItem(item), c.TargetKey);
+                c.LearnedScore = PreferenceLearningService.GetPreference(itemKey, c.TargetKey);
                 c.FinalScore = (1f - itemLearningWeight) * baseScore + itemLearningWeight * c.LearnedScore;
+
+                TransferDiagnostics.CandidateScored(traceId, c.TargetKey, c.RecencyScore, c.AffinityScore,
+                    c.LearnedScore, baseScore, itemLearningWeight, c.FinalScore, rank);
+            }
+
+            // Detect ties on the top final score before the deterministic tie-break.
+            bool tieDetected = false;
+            if (result.Count > 1)
+            {
+                for (int i = 1; i < result.Count; i++)
+                {
+                    if (result[i].FinalScore == result[0].FinalScore)
+                    {
+                        tieDetected = true;
+                        break;
+                    }
+                }
             }
 
             // 2) Final sort by score (descending), stable tie-break by recency then original order.
             result.Sort(CompareByFinalScore);
+            sw.Stop();
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.Scoring, sw.Elapsed.TotalMilliseconds);
+            if (result.Count > 0)
+            {
+                TransferDiagnostics.TargetSelected(traceId, result[0].TargetKey, tieDetected, tieDetected);
+            }
             return result;
         }
 

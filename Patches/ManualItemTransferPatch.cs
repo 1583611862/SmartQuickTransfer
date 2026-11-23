@@ -33,6 +33,13 @@ namespace SmartQuickTransfer.Patches
                 if (ev != null)
                 {
                     CorrectionMatcher.Evaluate(ev);
+                    TransferDiagnostics.ManualDrag(
+                        ev.ItemIdentifier,
+                        ev.SourceKey,
+                        ev.DestinationKey,
+                        ev.MovedCount,
+                        ev.WasMatched,
+                        ev.WasMatched ? "" : (string.IsNullOrEmpty(ev.LogRejectReason) ? "no_pending_prediction" : ev.LogRejectReason));
                 }
             }
             catch (Exception e)

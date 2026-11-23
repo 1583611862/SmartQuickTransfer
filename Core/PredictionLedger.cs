@@ -4,9 +4,10 @@ using System.Collections.Generic;
 namespace SmartQuickTransfer.Core
 {
     /// <summary>
-    /// Holds the most recent automatic-transfer predictions for a short time window. Bounded,
-    /// in-memory only. Expired records are pruned lazily on read. A record is consumed exactly
-    /// once when it is matched against a user correction.
+    /// CLASS A DATA - temporary predictions. Bounded, in-memory only. These records exist solely to
+    /// link one automatic transfer to a possible subsequent player correction. They are NEVER
+    /// written to the PreferenceStore and clearing them NEVER affects persisted learning data.
+    /// Expired records are pruned lazily with the monotonic clock. A record is consumed exactly once.
     /// </summary>
     internal static class PredictionLedger
     {
@@ -16,6 +17,7 @@ namespace SmartQuickTransfer.Core
         private static readonly List<PendingPrediction> Entries = new List<PendingPrediction>();
 
         internal static void Record(
+            string traceId,
             string itemKey,
             GameItem itemReference,
             GameInventory sourceInventory,
@@ -31,9 +33,11 @@ namespace SmartQuickTransfer.Core
             }
 
             float now = UnityEngine.Time.realtimeSinceStartup;
-            Prune(now);
+            PruneExpired(now);
 
             PendingPrediction entry = new PendingPrediction();
+            entry.PredictionId = TransferDiagnostics.NextPredictionId();
+            entry.TraceId = string.IsNullOrEmpty(traceId) ? "000000" : traceId;
             entry.ItemKey = itemKey;
             entry.ItemReference = itemReference;
             entry.SourceInventory = sourceInventory;
@@ -43,21 +47,33 @@ namespace SmartQuickTransfer.Core
             entry.RequestedCount = requestedCount;
             entry.MovedCount = movedCount;
             entry.CreatedAt = now;
+            entry.CreatedUtc = DateTime.UtcNow;
+            entry.ExpiresUtc = entry.CreatedUtc.AddSeconds(PredictionLifetimeSeconds);
             entry.IsPending = true;
 
             Entries.Add(entry);
+
+            // Capacity eviction: oldest first, with an explicit reason + count log.
+            int evicted = 0;
             while (Entries.Count > MaxPending)
             {
+                Retire(Entries[0], "capacity", false);
                 Entries.RemoveAt(0);
+                evicted++;
+            }
+            if (evicted > 0)
+            {
+                TransferDiagnostics.PredictionLifecycle("evicted", "", "capacity", Entries.Count);
             }
 
-            ModEntry.LogInfo("prediction: item=" + itemKey + ", target=" + predictedTargetKey);
+            TransferDiagnostics.PredictionRegistered(
+                entry.TraceId, entry.PredictionId, itemKey, sourceKey, predictedTargetKey,
+                requestedCount, movedCount, Entries.Count);
         }
 
         /// <summary>
         /// Find the most recent still-pending prediction whose predicted destination inventory is
-        /// the given source inventory. Corrections always drag the item back OUT of the predicted
-        /// target, so this is the anchor of the match. Returns null when nothing matches.
+        /// the given source inventory. Returns null when nothing matches (the caller logs the reason).
         /// </summary>
         internal static PendingPrediction FindByPredictedInventory(GameInventory predictedSource)
         {
@@ -66,7 +82,7 @@ namespace SmartQuickTransfer.Core
                 return null;
             }
             float now = UnityEngine.Time.realtimeSinceStartup;
-            Prune(now);
+            PruneExpired(now);
             for (int i = Entries.Count - 1; i >= 0; i--)
             {
                 PendingPrediction p = Entries[i];
@@ -80,10 +96,7 @@ namespace SmartQuickTransfer.Core
             return null;
         }
 
-        /// <summary>
-        /// True when exactly one pending prediction matches the given item key and predicted
-        /// inventory. Used to avoid learning when several identical items make the match ambiguous.
-        /// </summary>
+        /// <summary>True when exactly one pending prediction matches the given item key and inventory.</summary>
         internal static bool IsUniquePendingFor(string itemKey, GameInventory predictedInventory)
         {
             int count = 0;
@@ -112,25 +125,69 @@ namespace SmartQuickTransfer.Core
             {
                 return;
             }
-            prediction.IsPending = false;
+            Retire(prediction, "matched", true);
             Entries.Remove(prediction);
+            TransferDiagnostics.PredictionLifecycle("consumed", prediction.PredictionId, "matched", Entries.Count);
         }
 
-        /// <summary>Drop expired entries and entries that are no longer pending.</summary>
-        private static void Prune(float now)
+        /// <summary>Lazily drop expired records using the monotonic clock; log aggregate count only.</summary>
+        private static void PruneExpired(float now)
         {
+            int expired = 0;
             for (int i = Entries.Count - 1; i >= 0; i--)
             {
-                if (!Entries[i].IsPending || Entries[i].IsExpired(now, PredictionLifetimeSeconds))
+                PendingPrediction p = Entries[i];
+                if (p.IsExpired(now, PredictionLifetimeSeconds))
                 {
+                    Retire(p, "expired", false);
                     Entries.RemoveAt(i);
+                    expired++;
                 }
+            }
+            if (expired > 0)
+            {
+                TransferDiagnostics.PredictionLifecycle("expired", "", "timeout", Entries.Count);
             }
         }
 
+        private static void Retire(PendingPrediction p, string reason, bool consumed)
+        {
+            if (p == null)
+            {
+                return;
+            }
+            p.IsPending = false;
+            // Release temporary Unity object references so retired records do not keep objects alive.
+            p.ReleaseReferences();
+        }
+
+        /// <summary>
+        /// CLASS A only: clears temporary predictions for a lifecycle reason. This method never
+        /// touches PreferenceStore or persisted learning data.
+        /// </summary>
+        internal static void ClearPendingPredictions(string reason)
+        {
+            int count = Entries.Count;
+            for (int i = 0; i < Entries.Count; i++)
+            {
+                Retire(Entries[i], reason, false);
+            }
+            Entries.Clear();
+            if (count > 0 || reason == "mod_disable" || reason == "game_exit" || reason == "mod_unload")
+            {
+                TransferDiagnostics.PredictionLifecycle("cleared", "", reason, Entries.Count);
+            }
+        }
+
+        internal static int Count
+        {
+            get { return Entries.Count; }
+        }
+
+        /// <summary>Compatibility alias used by ModEntry shutdown paths.</summary>
         internal static void Clear()
         {
-            Entries.Clear();
+            ClearPendingPredictions("lifecycle");
         }
     }
 }

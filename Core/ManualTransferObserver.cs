@@ -16,6 +16,9 @@ namespace SmartQuickTransfer.Core
         internal string DestinationKey = "";
         internal int MovedCount;
         internal int RequestedCount;
+        internal string ItemIdentifier = "";
+        internal bool WasMatched;
+        internal string LogRejectReason = "";
     }
 
     /// <summary>
@@ -169,6 +172,8 @@ namespace SmartQuickTransfer.Core
             ev.DestinationKey = StableIdentityResolver.ResolveInventoryOnly(ctx.DestinationInventory);
             ev.MovedCount = moved;
             ev.RequestedCount = ctx.RequestedCount;
+            try { ev.ItemIdentifier = ctx.Item == null ? "" : ctx.Item.identifier; }
+            catch (Exception) { ev.ItemIdentifier = ""; }
             return ev;
         }
 

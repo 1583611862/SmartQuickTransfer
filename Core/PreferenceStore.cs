@@ -1,20 +1,28 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using UnityEngine;
 
 namespace SmartQuickTransfer.Core
 {
     /// <summary>
-    /// Local, versioned JSON persistence of aggregated preferences. Uses the game-provided ModData
-    /// folder (<persistentDataPath>/ModData/&lt;modId&gt;), completely separate from ModConfigs.
+    /// CLASS B DATA - persisted learning preferences. Local, versioned JSON in the game-provided
+    /// ModData folder (&lt;persistentDataPath&gt;/ModData/&lt;modId&gt;), separate from ModConfigs.
     /// Only stable keys and aggregate counters are stored - never Unity objects, window references,
-    /// inventories, temporary predictions or per-action logs. JSON is written to a temporary file
-    /// then moved atomically over the target. Any read/parse failure safely yields an empty model.
+    /// inventories, temporary predictions (class A) or per-action logs.
+    ///
+    /// File safety:
+    ///   - write to a temporary file, validate it, then atomically replace the main file;
+    ///   - keep the previous valid file as a .bak before overwriting;
+    ///   - on load failure try the backup first; if both are corrupt, PRESERVE the original files
+    ///     (never overwrite the only copy) and fall back to an empty model in memory;
+    ///   - version-incompatible files are preserved, not silently deleted.
     /// </summary>
     internal static class PreferenceStore
     {
         internal const int CurrentVersion = 1;
         private const string FileName = "preferences.json";
+        private const string BackupFileName = "preferences.json.bak";
         private const string TempFileName = "preferences.json.tmp";
 
         [Serializable]
@@ -41,81 +49,112 @@ namespace SmartQuickTransfer.Core
             public ItemPreferenceDto[] items;
         }
 
-        /// <summary>Loads all persisted preferences. Corrupt or unknown-version files reset to empty.</summary>
-        internal static List<ItemPreference> Load()
+        internal sealed class LoadResult
         {
-            List<ItemPreference> result = new List<ItemPreference>();
-            string text = null;
+            internal List<ItemPreference> Model = new List<ItemPreference>();
+            internal bool FileExists;
+            internal bool Success;
+            internal bool RecoveredFromBackup;
+            internal string DataVersion = "unknown";
+            internal string FilePath = "unavailable";
+            internal double LoadDurationMs;
+            internal int TargetCount;
+            internal string Reason = "";
+        }
+
+        internal sealed class SaveResult
+        {
+            internal bool Success;
+            internal long FileBytes = -1;
+            internal string FilePath = "unavailable";
+            internal double DurationMs;
+            internal string Reason = "";
+        }
+
+        /// <summary>Load with backup recovery and full diagnostics metadata.</summary>
+        internal static LoadResult Load()
+        {
+            LoadResult result = new LoadResult();
+            Stopwatch sw = Stopwatch.StartNew();
+            result.FilePath = SafePath(FileName) ?? "unavailable";
+
+            string mainText = null;
             try
             {
-                text = ModHelper.ReadModDataFileText(ModEntry.ModId, FileName);
+                result.FileExists = ModHelper.ModDataFileExists(ModEntry.ModId, FileName);
+                mainText = ModHelper.ReadModDataFileText(ModEntry.ModId, FileName);
             }
             catch (Exception e)
             {
-                ModEntry.LogError("reading learning data failed: " + e.Message);
-                return result;
+                result.Reason = "read_failed: " + e.Message;
+                TransferDiagnostics.ErrorThrottled("preference_read", "reading learning data failed: " + e.Message);
             }
 
-            if (string.IsNullOrEmpty(text))
+            string usedText = mainText;
+            if (!string.IsNullOrEmpty(usedText))
             {
-                return result;
-            }
-
-            try
-            {
-                PreferenceFileDto dto = JsonUtility.FromJson<PreferenceFileDto>(text);
-                if (dto == null || dto.version != CurrentVersion || dto.items == null)
+                List<ItemPreference> parsed;
+                if (TryParse(usedText, out parsed, result))
                 {
-                    ModEntry.LogInfo("learning data version mismatch or empty; starting fresh.");
-                    return result;
+                    result.Model = parsed;
+                    result.Success = true;
                 }
-
-                for (int i = 0; i < dto.items.Length; i++)
+                else
                 {
-                    ItemPreferenceDto itemDto = dto.items[i];
-                    if (itemDto == null || string.IsNullOrEmpty(itemDto.itemKey))
+                    // Main file present but corrupt: try the backup before giving up.
+                    string backupText = null;
+                    try
                     {
-                        continue;
-                    }
-                    ItemPreference item = new ItemPreference();
-                    item.ItemKey = itemDto.itemKey;
-                    item.CorrectionEvents = Sanitize(itemDto.correctionEvents);
-                    if (itemDto.targets != null)
-                    {
-                        for (int j = 0; j < itemDto.targets.Length; j++)
+                        if (ModHelper.ModDataFileExists(ModEntry.ModId, BackupFileName))
                         {
-                            TargetPreferenceDto t = itemDto.targets[j];
-                            if (t == null || string.IsNullOrEmpty(t.targetKey))
-                            {
-                                continue;
-                            }
-                            TargetPreference tp = new TargetPreference();
-                            tp.TargetKey = t.targetKey;
-                            tp.PositiveEvidence = Sanitize(t.positive);
-                            tp.NegativeEvidence = Sanitize(t.negative);
-                            tp.LastUpdatedUtc = ParseUtc(t.updatedUtc);
-                            item.Targets[tp.TargetKey] = tp;
+                            backupText = ModHelper.ReadModDataFileText(ModEntry.ModId, BackupFileName);
                         }
                     }
-                    result.Add(item);
+                    catch (Exception e)
+                    {
+                        TransferDiagnostics.ErrorThrottled("preference_backup_read", "reading backup failed: " + e.Message);
+                    }
+                    if (!string.IsNullOrEmpty(backupText))
+                    {
+                        LoadResult backupProbe = new LoadResult();
+                        List<ItemPreference> backupParsed;
+                        if (TryParse(backupText, out backupParsed, backupProbe))
+                        {
+                            result.Model = backupParsed;
+                            result.Success = true;
+                            result.RecoveredFromBackup = true;
+                        }
+                    }
+                    // If both are corrupt we intentionally leave both files untouched and run with
+                    // an empty in-memory model - never overwrite the only copy of user data.
                 }
             }
-            catch (Exception e)
-            {
-                ModEntry.LogError("learning data was corrupt; resetting to an empty model: " + e.Message);
-                return new List<ItemPreference>();
-            }
 
+            sw.Stop();
+            result.LoadDurationMs = sw.Elapsed.TotalMilliseconds;
+            result.TargetCount = CountTargets(result.Model);
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.PreferenceLoad, result.LoadDurationMs);
+            TransferDiagnostics.PreferenceLoaded(
+                result.FileExists, result.Success, result.Model.Count, result.TargetCount,
+                result.RecoveredFromBackup, result.FilePath, result.DataVersion,
+                result.LoadDurationMs.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
             return result;
         }
 
-        /// <summary>Persists a snapshot atomically. Failures are logged but never thrown to gameplay.</summary>
-        internal static void Save(List<ItemPreference> model)
+        /// <summary>
+        /// Persists a snapshot with a backup + atomic replace. Failures are reported, never thrown.
+        /// The main and backup files are preserved when any step fails.
+        /// </summary>
+        internal static SaveResult Save(List<ItemPreference> model)
         {
+            SaveResult result = new SaveResult();
             if (model == null)
             {
-                return;
+                result.Reason = "null_model";
+                return result;
             }
+            Stopwatch sw = Stopwatch.StartNew();
+            result.FilePath = SafePath(FileName) ?? "unavailable";
             try
             {
                 List<ItemPreferenceDto> items = new List<ItemPreferenceDto>();
@@ -157,32 +196,163 @@ namespace SmartQuickTransfer.Core
                 file.items = items.ToArray();
                 string json = JsonUtility.ToJson(file, true);
 
-                // Atomic replace: write to a temporary file in the same folder, then overwrite.
-                ModHelper.WriteModDataFileText(ModEntry.ModId, TempFileName, json);
-                string tempPath = ResolveTempPath();
-                string finalPath = ResolveFinalPath();
-                if (tempPath != null && finalPath != null)
+                string finalPath = SafePath(FileName);
+                string backupPath = SafePath(BackupFileName);
+                string tempPath = SafePath(TempFileName);
+                if (finalPath == null || backupPath == null || tempPath == null)
                 {
-                    System.IO.File.Copy(tempPath, finalPath, true);
-                    System.IO.File.Delete(tempPath);
+                    result.Reason = "path_unavailable";
+                    return result;
                 }
+
+                // 1) keep the previous valid main file as a backup.
+                if (System.IO.File.Exists(finalPath))
+                {
+                    System.IO.File.Copy(finalPath, backupPath, true);
+                }
+                // 2) write the candidate to a temporary file.
+                ModHelper.WriteModDataFileText(ModEntry.ModId, TempFileName, json);
+                // 3) validate the temporary file before replacing anything.
+                string tempText = System.IO.File.ReadAllText(tempPath);
+                List<ItemPreference> probe;
+                LoadResult probeResult = new LoadResult();
+                if (!TryParse(tempText, out probe, probeResult))
+                {
+                    result.Reason = "temp_validation_failed";
+                    TryDelete(tempPath);
+                    return result;
+                }
+                // 4) atomic replace of the main file only after successful validation.
+                System.IO.File.Copy(tempPath, finalPath, true);
+                TryDelete(tempPath);
+
+                result.Success = true;
+                System.IO.FileInfo info = new System.IO.FileInfo(finalPath);
+                result.FileBytes = info.Exists ? info.Length : -1;
             }
             catch (Exception e)
             {
-                ModEntry.LogError("saving learning data failed (gameplay unaffected): " + e.Message);
+                result.Success = false;
+                result.Reason = "exception: " + e.Message;
+                TransferDiagnostics.ErrorThrottled("preference_save", "saving learning data failed: " + e.Message);
+            }
+
+            sw.Stop();
+            result.DurationMs = sw.Elapsed.TotalMilliseconds;
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.PreferenceSave, result.DurationMs);
+            return result;
+        }
+
+        /// <summary>
+        /// User-initiated reset ONLY. Deletes main + backup after writing an empty validated model.
+        /// Must never be called from any lifecycle cleanup path.
+        /// </summary>
+        internal static SaveResult Reset()
+        {
+            List<ItemPreference> empty = new List<ItemPreference>();
+            SaveResult result = Save(empty);
+            if (result.Success)
+            {
+                TryDelete(SafePath(BackupFileName));
+                TryDelete(SafePath(TempFileName));
+            }
+            return result;
+        }
+
+        private static bool TryParse(string text, out List<ItemPreference> model, LoadResult result)
+        {
+            model = new List<ItemPreference>();
+            try
+            {
+                PreferenceFileDto dto = JsonUtility.FromJson<PreferenceFileDto>(text);
+                if (dto == null)
+                {
+                    return false;
+                }
+                result.DataVersion = dto.version.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // Version migration policy: never delete incompatible data. Accept current version;
+                // for other versions we preserve files on disk but start with an empty model.
+                if (dto.version != CurrentVersion)
+                {
+                    return false;
+                }
+                if (dto.items == null)
+                {
+                    return true; // valid empty file
+                }
+                for (int i = 0; i < dto.items.Length; i++)
+                {
+                    ItemPreferenceDto itemDto = dto.items[i];
+                    if (itemDto == null || string.IsNullOrEmpty(itemDto.itemKey))
+                    {
+                        continue;
+                    }
+                    ItemPreference item = new ItemPreference();
+                    item.ItemKey = itemDto.itemKey;
+                    item.CorrectionEvents = Sanitize(itemDto.correctionEvents);
+                    if (itemDto.targets != null)
+                    {
+                        for (int j = 0; j < itemDto.targets.Length; j++)
+                        {
+                            TargetPreferenceDto t = itemDto.targets[j];
+                            if (t == null || string.IsNullOrEmpty(t.targetKey))
+                            {
+                                continue;
+                            }
+                            TargetPreference tp = new TargetPreference();
+                            tp.TargetKey = t.targetKey;
+                            tp.PositiveEvidence = Sanitize(t.positive);
+                            tp.NegativeEvidence = Sanitize(t.negative);
+                            tp.LastUpdatedUtc = ParseUtc(t.updatedUtc);
+                            item.Targets[tp.TargetKey] = tp;
+                        }
+                    }
+                    model.Add(item);
+                }
+                return true;
+            }
+            catch (Exception)
+            {
+                model = new List<ItemPreference>();
+                return false;
             }
         }
 
-        private static string ResolveFinalPath()
+        private static int CountTargets(List<ItemPreference> model)
         {
-            try { return System.IO.Path.Combine(ModHelper.GetModDataFolder(ModEntry.ModId), FileName); }
-            catch (Exception) { return null; }
+            int count = 0;
+            for (int i = 0; i < model.Count; i++)
+            {
+                count += model[i].Targets.Count;
+            }
+            return count;
         }
 
-        private static string ResolveTempPath()
+        private static string SafePath(string fileName)
         {
-            try { return System.IO.Path.Combine(ModHelper.GetModDataFolder(ModEntry.ModId), TempFileName); }
-            catch (Exception) { return null; }
+            try
+            {
+                return System.IO.Path.Combine(ModHelper.GetModDataFolder(ModEntry.ModId), fileName);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(path) && System.IO.File.Exists(path))
+                {
+                    System.IO.File.Delete(path);
+                }
+            }
+            catch (Exception)
+            {
+                // ignore
+            }
         }
 
         private static float Sanitize(float value)
@@ -211,19 +381,6 @@ namespace SmartQuickTransfer.Core
                 return parsed.ToUniversalTime();
             }
             return DateTime.UtcNow;
-        }
-
-        internal static void Delete()
-        {
-            try
-            {
-                ModHelper.DeleteModDataFile(ModEntry.ModId, FileName);
-                ModHelper.DeleteModDataFile(ModEntry.ModId, TempFileName);
-            }
-            catch (Exception e)
-            {
-                ModEntry.LogError("deleting learning data failed: " + e.Message);
-            }
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using SmartQuickTransfer.Transfer;
 using SmartQuickTransfer.Visuals;
 
@@ -9,10 +10,18 @@ namespace SmartQuickTransfer.Core
     {
         internal static TransferOutcome Transfer(GameItem item, PixelWindow sourceWindow)
         {
+            return Transfer(item, sourceWindow, null);
+        }
+
+        internal static TransferOutcome Transfer(GameItem item, PixelWindow sourceWindow, string traceId)
+        {
             if (item == null)
             {
                 return TransferOutcome.NotHandled;
             }
+
+            // Business-event-driven periodic save check; never per-frame, never a background thread.
+            PreferenceLearningService.TickSafeSave();
 
             FlightCapture capture = TransferAnimation.Capture(item);
 
@@ -24,7 +33,10 @@ namespace SmartQuickTransfer.Core
                     && ReferenceEquals(item.parentInventory, entry.afterhourInventory);
                 if (fromGround)
                 {
-                    return TransferToAfterhourPocket(item, sourceWindow, capture);
+                    Branch(traceId, "night_ground");
+                    TransferOutcome outcome = TransferToAfterhourPocket(item, sourceWindow, capture);
+                    ReportSpecial(traceId, "night_ground", item, DescribeFinalArea(item), outcome);
+                    return outcome;
                 }
 
                 TransferSettings settings = ModEntry.Settings;
@@ -34,7 +46,10 @@ namespace SmartQuickTransfer.Core
                     GameInventory desk = DesktopTransfer.ResolveDesk(item);
                     if (desk != null)
                     {
-                        return TransferToCustomerDesk(item, sourceWindow, desk, capture);
+                        Branch(traceId, "customer_demand");
+                        TransferOutcome outcome = TransferToCustomerDesk(item, sourceWindow, desk, capture);
+                        ReportSpecial(traceId, "customer_demand", item, DesktopTransfer.DescribeArea(desk), outcome);
+                        return outcome;
                     }
                     ModEntry.LogInfo("customer wants " + DescribeItem(item)
                         + " but the desk has no valid slot; using the normal route.");
@@ -48,43 +63,64 @@ namespace SmartQuickTransfer.Core
 
                 if (!fromMachine)
                 {
-                    TransferOutcome scored = TryScoredTargets(item, sourceWindow, capture);
+                    Branch(traceId, "normal");
+                    TransferOutcome scored = TryScoredTargets(item, sourceWindow, capture, traceId);
                     if (scored != TransferOutcome.NotHandled)
                     {
                         return scored;
                     }
                 }
+                else
+                {
+                    Branch(traceId, "machine_return");
+                }
 
-                return TransferToFallback(item, sourceWindow, capture, fromMachine);
+                TransferOutcome fallbackOutcome = TransferToFallback(item, sourceWindow, capture, fromMachine);
+                ReportSpecial(traceId, fromMachine ? "machine_return" : "fallback", item,
+                    DescribeFinalArea(item), fallbackOutcome);
+                return fallbackOutcome;
             }
             catch (Exception e)
             {
                 ModEntry.LogError("transfer aborted: " + e);
+                TransferDiagnostics.ErrorThrottled("transfer", "transfer aborted: " + e.Message);
                 return TransferOutcome.Failed;
             }
         }
 
         /// <summary>
-        /// Collects all eligible candidates, ranks them with the scoring model, then tries them in
-        /// order. Only a complete failure (nothing moved) advances to the next candidate; a partial
-        /// move stops immediately (never split a stack across windows). Successful scored transfers
-        /// create a short-lived prediction for the correction-learning loop.
-        /// Returns NotHandled when there were no candidates, so the caller runs the old fallback.
+        /// Collects all eligible candidates, ranks them, then tries them in order. Only a complete
+        /// failure (nothing moved) advances to the next candidate; a partial move stops immediately.
+        /// Behaviour is unchanged from the pre-diagnostic version; logging was added around it.
         /// </summary>
-        private static TransferOutcome TryScoredTargets(GameItem item, PixelWindow sourceWindow, FlightCapture capture)
+        private static TransferOutcome TryScoredTargets(GameItem item, PixelWindow sourceWindow,
+            FlightCapture capture, string traceId)
         {
-            List<TargetCandidate> candidates = WindowActivityManager.GetEligibleTargets(item, sourceWindow);
+            List<TargetCandidate> candidates = WindowActivityManager.GetEligibleTargets(item, sourceWindow, traceId);
             if (candidates == null || candidates.Count == 0)
             {
+                TransferDiagnostics.NoCandidate(traceId);
                 return TransferOutcome.NotHandled;
             }
 
-            List<TargetCandidate> ranked = TargetScoringService.ScoreAndRank(item, candidates);
+            List<TargetCandidate> ranked = TargetScoringService.ScoreAndRank(item, candidates, traceId);
 
             for (int i = 0; i < ranked.Count; i++)
             {
                 TargetCandidate candidate = ranked[i];
                 TransferAttemptResult attempt = TryMoveInto(item, sourceWindow, candidate, capture);
+
+                TransferDiagnostics.TransferResult(
+                    traceId,
+                    candidate.TargetKey,
+                    candidate.TargetKey,
+                    attempt.RequestedCount,
+                    attempt.MovedCount,
+                    outcomeName(attempt.Outcome),
+                    attempt.IsPartial,
+                    attempt.Outcome == AttemptOutcome.NothingMoved,
+                    attempt.MovedCount > 0 ? DescribeFinalArea(item) : "unknown",
+                    attempt.DurationMs);
 
                 if (attempt.Outcome == AttemptOutcome.NothingMoved)
                 {
@@ -97,17 +133,15 @@ namespace SmartQuickTransfer.Core
                 GameInventory destination = candidate.Inventory;
                 if (destination != null)
                 {
-                    // The ORIGINAL source is the pre-transfer snapshot, not item.parentInventory
-                    // (which now points at the destination after the native move).
                     GameInventory originalSource = capture != null ? capture.SourceInventory : null;
                     string itemKey = StableIdentityResolver.ResolveItem(item);
-                    string sourceKey = StableIdentityResolver.ResolveInventoryOnly(originalSource);
                     PredictionLedger.Record(
+                        traceId,
                         itemKey,
                         item,
                         originalSource,
                         destination,
-                        sourceKey,
+                        StableIdentityResolver.ResolveInventoryOnly(originalSource),
                         candidate.TargetKey,
                         attempt.RequestedCount,
                         attempt.MovedCount);
@@ -117,20 +151,16 @@ namespace SmartQuickTransfer.Core
                     + " x " + DescribeItem(item) + " from '" + WindowActivityManager.Describe(sourceWindow)
                     + "' into '" + candidate.Description + "' (score=" + candidate.FinalScore.ToString("0.0")
                     + "); item now in " + DescribeFinalArea(item) + ".");
-
                 return TransferOutcome.MovedToWindow;
             }
 
-            // Every scored candidate failed at transfer time; fall back to the old storage routing.
             ModEntry.LogInfo("all scored candidates rejected " + DescribeItem(item) + "; using fallback.");
             return TransferOutcome.NotHandled;
         }
 
-        /// <summary>
-        /// Attempts the native move into one candidate while raising the automation guard, so a
-        /// simultaneous manual-drag observer can never mistake our own transfer for player input.
-        /// </summary>
-        private static TransferAttemptResult TryMoveInto(GameItem item, PixelWindow sourceWindow, TargetCandidate candidate, FlightCapture capture)
+        /// <summary>Native move into one candidate, guarded, with timing. No behaviour change.</summary>
+        private static TransferAttemptResult TryMoveInto(GameItem item, PixelWindow sourceWindow,
+            TargetCandidate candidate, FlightCapture capture)
         {
             TransferAttemptResult result = new TransferAttemptResult();
             result.Candidate = candidate;
@@ -142,12 +172,11 @@ namespace SmartQuickTransfer.Core
                 return result;
             }
 
+            Stopwatch sw = Stopwatch.StartNew();
             int moved = 0;
             AutomationTransferGuard.Begin();
             try
             {
-                // Use the native window transfer path (same as the old code) so UI refresh and
-                // multi-slot acceptance behave exactly as before.
                 moved = ContainerTransfer.MoveInto(candidate.Window, item, sourceWindow);
             }
             catch (Exception e)
@@ -158,6 +187,9 @@ namespace SmartQuickTransfer.Core
             {
                 AutomationTransferGuard.End();
             }
+            sw.Stop();
+            result.DurationMs = sw.Elapsed.TotalMilliseconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.Transfer, sw.Elapsed.TotalMilliseconds);
 
             result.MovedCount = moved;
             if (moved <= 0)
@@ -166,12 +198,42 @@ namespace SmartQuickTransfer.Core
                 return result;
             }
 
-            // Play the flight animation exactly once, as the old single-target path did.
             TransferAnimation.Play(capture, item, candidate.Slot, ShouldHideSource(capture, item, moved, result.RequestedCount));
             result.Outcome = moved < result.RequestedCount
                 ? AttemptOutcome.PartialSuccess
                 : AttemptOutcome.FullSuccess;
             return result;
+        }
+
+        private static void Branch(string traceId, string branch)
+        {
+            TransferDiagnostics.Branch(traceId, branch);
+        }
+
+        private static void ReportSpecial(string traceId, string branch, GameItem item,
+            string finalArea, TransferOutcome outcome)
+        {
+            TransferDiagnostics.TransferResult(
+                traceId,
+                "n/a_special_branch",
+                "n/a_special_branch",
+                item == null ? 0 : item.unitCount,
+                0,
+                outcome.ToString(),
+                false,
+                false,
+                finalArea,
+                "unavailable");
+        }
+
+        private static string outcomeName(AttemptOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case AttemptOutcome.FullSuccess: return "success";
+                case AttemptOutcome.PartialSuccess: return "partial";
+                default: return "failed";
+            }
         }
 
         private static TransferOutcome TransferToAfterhourPocket(GameItem item, PixelWindow sourceWindow, FlightCapture capture)
@@ -248,7 +310,6 @@ namespace SmartQuickTransfer.Core
             return TransferOutcome.MovedToFallback;
         }
 
-        /// <summary>Guarded wrapper around the native inventory transfer (DesktopTransfer path).</summary>
         private static int GuardedMove(GameInventory destination, GameItem item, PixelWindow source)
         {
             AutomationTransferGuard.Begin();
@@ -268,9 +329,6 @@ namespace SmartQuickTransfer.Core
             {
                 return false;
             }
-
-            // Only hide the source icon when the whole stack actually left its old container;
-            // a partial transfer or a stack merge would otherwise hide the remainder.
             return item.parentInventory != null
                 && !ReferenceEquals(item.parentInventory, capture.SourceInventory);
         }
@@ -294,15 +352,10 @@ namespace SmartQuickTransfer.Core
             {
                 return "<null>";
             }
-
             string identifier = string.IsNullOrEmpty(item.identifier) ? "<unknown>" : item.identifier;
             return "'" + identifier + "'";
         }
 
-        /// <summary>
-        /// Reads back where the item really ended up after the native accept, so a double hop
-        /// (for example 桌面 first and 仓库 afterwards) shows up directly in the log.
-        /// </summary>
         private static string DescribeFinalArea(GameItem item)
         {
             try

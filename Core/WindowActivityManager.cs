@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using SmartQuickTransfer.Transfer;
 
 namespace SmartQuickTransfer.Core
@@ -111,7 +112,19 @@ namespace SmartQuickTransfer.Core
         /// </summary>
         internal static List<TargetCandidate> GetEligibleTargets(GameItem item, PixelWindow sourceWindow)
         {
+            return GetEligibleTargets(item, sourceWindow, null);
+        }
+
+        /// <summary>
+        /// Diagnostic-aware candidate collection. Eligibility decisions and ordering are identical
+        /// to the non-diagnostic path; this overload only adds structured rejection reasons and
+        /// timing. Slot checks use the read-only native lookup and never move an item.
+        /// </summary>
+        internal static List<TargetCandidate> GetEligibleTargets(GameItem item, PixelWindow sourceWindow, string traceId)
+        {
             List<TargetCandidate> result = new List<TargetCandidate>();
+            Stopwatch scanSw = Stopwatch.StartNew();
+            Stopwatch slotSw = new Stopwatch();
             if (item == null)
             {
                 return result;
@@ -125,6 +138,7 @@ namespace SmartQuickTransfer.Core
             List<PixelWindow> windows = handler.visibleWindows;
             if (windows == null || windows.Count == 0)
             {
+                TransferDiagnostics.CandidateScan(traceId, 0, 0);
                 return result;
             }
 
@@ -135,19 +149,47 @@ namespace SmartQuickTransfer.Core
                 PixelWindow candidate = windows[i];
                 try
                 {
-                    if (candidate == null || ReferenceEquals(candidate, sourceWindow))
+                    if (candidate == null)
                     {
+                        Reject(traceId, candidate, "invalid_target");
                         continue;
                     }
-                    if (!IsEligibleTarget(candidate, includeStorePanels))
+                    if (ReferenceEquals(candidate, sourceWindow))
                     {
+                        Reject(traceId, candidate, "source_window");
+                        continue;
+                    }
+                    if (!candidate.IsVisible())
+                    {
+                        Reject(traceId, candidate, "invisible");
+                        continue;
+                    }
+                    if (!candidate.canMove)
+                    {
+                        if (!includeStorePanels)
+                        {
+                            Reject(traceId, candidate, "store_panel_disabled");
+                            continue;
+                        }
+                        if (!IsStorePanel(candidate))
+                        {
+                            Reject(traceId, candidate, "not_movable");
+                            continue;
+                        }
+                    }
+                    if (!HasItemStorage(candidate))
+                    {
+                        Reject(traceId, candidate, "no_inventory");
                         continue;
                     }
 
-                    // Read-only native slot lookup; ResolveSlot only reads/validates, never moves.
+                    // Read-only native slot lookup; never attempts a transfer.
+                    slotSw.Start();
                     SlotMarker slot = MachineSlotResolver.FindValidSlot(candidate, item);
+                    slotSw.Stop();
                     if (slot == null)
                     {
+                        Reject(traceId, candidate, "slot_incompatible");
                         continue;
                     }
 
@@ -158,18 +200,26 @@ namespace SmartQuickTransfer.Core
                     target.Inventory = inventory;
                     target.FocusStamp = candidate.focusStamp;
                     target.OriginalOrder = order++;
-                    // Prefer the concrete inventory the slot belongs to: a window can expose
-                    // several inventories with different purposes.
                     target.TargetKey = StableIdentityResolver.ResolveTarget(candidate, inventory);
                     result.Add(target);
                 }
                 catch (Exception e)
                 {
+                    Reject(traceId, candidate, "invalid_target");
                     ModEntry.LogError("candidate scan skipped a window: " + e.Message);
                 }
             }
 
+            scanSw.Stop();
+            TransferDiagnostics.CandidateScan(traceId, windows.Count, result.Count);
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.CandidateCollection, scanSw.Elapsed.TotalMilliseconds);
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.SlotFilter, slotSw.Elapsed.TotalMilliseconds);
             return result;
+        }
+
+        private static void Reject(string traceId, PixelWindow window, string reason)
+        {
+            TransferDiagnostics.CandidateRejected(traceId, StableIdentityResolver.ResolveTarget(window, null), reason);
         }
 
         /// <summary>

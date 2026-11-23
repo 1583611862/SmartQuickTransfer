@@ -22,9 +22,11 @@ namespace SmartQuickTransfer.Core
     }
 
     /// <summary>
-    /// Lightweight online preference learning. No neural network, no model file training, no network.
-    /// Bayesian-smoothed utility U = 100*(P+1)/(P+N+2), learning weight L = 0.60*E/(E+3),
-    /// final score = (1-L)*BaseScore + L*U. Evidence and event count decay with a 45-day half-life.
+    /// Lightweight online preference learning (CLASS B / persisted data). No neural network, no
+    /// network. Bayesian utility U = 100*(P+1)/(P+N+2); learning weight L = 0.60*E/(E+3);
+    /// 45-day half-life. In-memory model is updated immediately on each correction; disk writes are
+    /// debounced/batched and driven only by business events (never per-frame, never a background
+    /// thread). A dirty flag is retained when a save fails so the next safe point retries.
     /// </summary>
     internal static class PreferenceLearningService
     {
@@ -34,10 +36,40 @@ namespace SmartQuickTransfer.Core
         internal const float MaxLearningWeight = 0.60f;
         internal const float ConfidenceDenominator = 3f;
 
+        // Batch-save policy (business-event driven, no timers/threads).
+        private const double DebounceSeconds = 5.0;
+        private const double PeriodicSafeSeconds = 120.0;
+        private const int ThresholdUpdates = 12;
+
         private static List<ItemPreference> Model = new List<ItemPreference>();
         private static bool Loaded;
+        private static bool Dirty;
+        private static int PendingUpdates;
         private static DateTime LastSaveUtc = DateTime.MinValue;
-        private const float MinSaveIntervalSeconds = 8f;
+        private static DateTime LastChangeUtc = DateTime.MinValue;
+        private static string LastSaveSource = "never";
+
+        internal static bool IsDirty { get { return Dirty; } }
+        internal static int ItemCount { get { return Model.Count; } }
+        internal static int TargetCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < Model.Count; i++)
+                {
+                    count += Model[i].Targets.Count;
+                }
+                return count;
+            }
+        }
+        internal static string LastSaveUtcText
+        {
+            get
+            {
+                return LastSaveUtc == DateTime.MinValue ? "never" : LastSaveUtc.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            }
+        }
 
         internal static void Initialize()
         {
@@ -45,25 +77,78 @@ namespace SmartQuickTransfer.Core
             {
                 return;
             }
-            Model = PreferenceStore.Load();
+            PreferenceStore.LoadResult load = PreferenceStore.Load();
+            Model = load.Model;
             Loaded = true;
-            ModEntry.LogInfo("learning model loaded: " + Model.Count + " item(s).");
+            Dirty = false;
+            PendingUpdates = 0;
+            LastSaveUtc = load.Success ? DateTime.UtcNow : DateTime.MinValue;
+            LastSaveSource = load.Success ? "loaded" : "none";
         }
 
         internal static void ResetForTests()
         {
             Model = new List<ItemPreference>();
             Loaded = true;
+            Dirty = false;
+            PendingUpdates = 0;
         }
 
-        internal static void Shutdown()
+        /// <summary>
+        /// Called from a business event (double click). Performs a periodic safe save only when
+        /// dirty and enough time has elapsed. Never called from Update/LateUpdate/FixedUpdate.
+        /// </summary>
+        internal static void TickSafeSave()
+        {
+            if (!Loaded || !Dirty)
+            {
+                return;
+            }
+            DateTime now = DateTime.UtcNow;
+            if ((now - LastSaveUtc).TotalSeconds >= PeriodicSafeSeconds
+                || (now - LastChangeUtc).TotalSeconds >= DebounceSeconds)
+            {
+                SaveNow("periodic_safe");
+            }
+        }
+
+        /// <summary>Flush at game exit / mod unload: save dirty data first, then release state.</summary>
+        internal static void Shutdown(string reason = "lifecycle")
         {
             if (!Loaded)
             {
                 return;
             }
-            PreferenceStore.Save(Model);
-            LastSaveUtc = DateTime.UtcNow;
+            if (Dirty)
+            {
+                SaveNow(reason);
+            }
+            TransferDiagnostics.SetSnapshot(
+                PredictionLedger.Count, ItemCount, TargetCount, Dirty, LastSaveUtcText);
+        }
+
+        /// <summary>
+        /// USER-INITIATED reset only. Never called by game exit, mod unload, disable, or any
+        /// temporary-data cleanup. Deletes persisted learning data via the safe reset flow.
+        /// </summary>
+        internal static bool ResetPreferenceStore(string reason)
+        {
+            Initialize();
+            PreferenceStore.SaveResult reset = PreferenceStore.Reset();
+            if (reset.Success)
+            {
+                Model = new List<ItemPreference>();
+                Dirty = false;
+                PendingUpdates = 0;
+                LastSaveUtc = DateTime.UtcNow;
+                LastSaveSource = "reset";
+                TransferDiagnostics.PreferenceReset(true, reason);
+            }
+            else
+            {
+                TransferDiagnostics.PreferenceReset(false, reason + " (" + reset.Reason + ")");
+            }
+            return reset.Success;
         }
 
         private static ItemPreference FindOrCreate(string itemKey)
@@ -82,15 +167,22 @@ namespace SmartQuickTransfer.Core
         }
 
         /// <summary>
-        /// Apply one correction: negative feedback to the wrongly predicted target, positive
-        /// feedback to the target the player actually chose. Weight W scales both; the correction
-        /// event count increases once (never doubled for the two target updates).
+        /// Apply one correction: negative feedback to the wrongly predicted target, positive to the
+        /// target the player chose. Weight W scales both; the event count increases once only.
+        /// Returns detailed before/after values so the caller can log the ACTUAL model update.
         /// </summary>
-        internal static void ApplyCorrection(string itemKey, string predictedTargetKey, string actualTargetKey, float weight)
+        internal static LearningUpdateInfo ApplyCorrection(string itemKey, string predictedTargetKey,
+            string actualTargetKey, float weight)
         {
+            LearningUpdateInfo info = new LearningUpdateInfo();
+            info.Success = false;
+            info.ItemKey = itemKey;
+            info.OldTarget = predictedTargetKey;
+            info.NewTarget = actualTargetKey;
+            info.FeedbackWeight = weight;
             if (string.IsNullOrEmpty(itemKey) || weight <= 0f)
             {
-                return;
+                return info;
             }
             Initialize();
 
@@ -104,36 +196,74 @@ namespace SmartQuickTransfer.Core
             }
             if (predictedTargetKey == null && actualTargetKey == null)
             {
-                return;
+                return info;
             }
 
             DateTime now = DateTime.UtcNow;
             ItemPreference item = FindOrCreate(itemKey);
 
-            // One event counts once, with the same partial weight as the feedback updates.
+            float eventsBefore = item.CorrectionEvents;
             item.CorrectionEvents = Decay(item.CorrectionEvents, item.Targets.Count > 0 ? OldestUpdate(item) : now, now) + weight;
+            info.CorrectionEvents = item.CorrectionEvents;
 
             if (predictedTargetKey != null)
             {
                 TargetPreference tp = GetOrCreateTarget(item, predictedTargetKey, now);
+                info.OldPositiveBefore = tp.PositiveEvidence;
+                info.OldNegativeBefore = tp.NegativeEvidence;
                 tp.PositiveEvidence = Decay(tp.PositiveEvidence, tp.LastUpdatedUtc, now);
                 tp.NegativeEvidence = Decay(tp.NegativeEvidence, tp.LastUpdatedUtc, now) + weight;
                 tp.LastUpdatedUtc = now;
-                ModEntry.LogInfo("learning updated: item=" + itemKey + ", target=" + predictedTargetKey
-                    + ", positive=" + Round(tp.PositiveEvidence) + ", negative=" + Round(tp.NegativeEvidence));
+                info.OldPositiveAfter = tp.PositiveEvidence;
+                info.OldNegativeAfter = tp.NegativeEvidence;
             }
             if (actualTargetKey != null && actualTargetKey != predictedTargetKey)
             {
                 TargetPreference tp = GetOrCreateTarget(item, actualTargetKey, now);
+                info.NewPositiveBefore = tp.PositiveEvidence;
+                info.NewNegativeBefore = tp.NegativeEvidence;
                 tp.PositiveEvidence = Decay(tp.PositiveEvidence, tp.LastUpdatedUtc, now) + weight;
                 tp.NegativeEvidence = Decay(tp.NegativeEvidence, tp.LastUpdatedUtc, now);
                 tp.LastUpdatedUtc = now;
-                ModEntry.LogInfo("learning updated: item=" + itemKey + ", target=" + actualTargetKey
-                    + ", positive=" + Round(tp.PositiveEvidence) + ", negative=" + Round(tp.NegativeEvidence));
+                info.NewPositiveAfter = tp.PositiveEvidence;
+                info.NewNegativeAfter = tp.NegativeEvidence;
             }
 
+            info.Confidence = item.CorrectionEvents / (item.CorrectionEvents + ConfidenceDenominator);
+            info.LearningWeight = MaxLearningWeight * info.Confidence;
+
             Prune();
-            MaybeSave();
+            Dirty = true;
+            PendingUpdates++;
+            LastChangeUtc = now;
+            info.Success = true;
+
+            // Threshold-triggered early save; otherwise debounce/periodic happens on business ticks.
+            if (PendingUpdates >= ThresholdUpdates)
+            {
+                SaveNow("threshold");
+            }
+            return info;
+        }
+
+        internal sealed class LearningUpdateInfo
+        {
+            internal bool Success;
+            internal string ItemKey = "";
+            internal string OldTarget = "";
+            internal string NewTarget = "";
+            internal float OldPositiveBefore;
+            internal float OldPositiveAfter;
+            internal float OldNegativeBefore;
+            internal float OldNegativeAfter;
+            internal float NewPositiveBefore;
+            internal float NewPositiveAfter;
+            internal float NewNegativeBefore;
+            internal float NewNegativeAfter;
+            internal float CorrectionEvents;
+            internal float Confidence;
+            internal float LearningWeight;
+            internal float FeedbackWeight;
         }
 
         private static TargetPreference GetOrCreateTarget(ItemPreference item, string key, DateTime now)
@@ -178,10 +308,7 @@ namespace SmartQuickTransfer.Core
             return MaxLearningWeight * (e / (e + ConfidenceDenominator));
         }
 
-        /// <summary>
-        /// Bayesian-smoothed preference U for (item, target). Returns 50 (neutral) for untrained
-        /// items so they are completely unaffected by the learning model.
-        /// </summary>
+        /// <summary>Bayesian-smoothed utility U. Returns neutral 50 for untrained items.</summary>
         internal static float GetPreference(string itemKey, string targetKey)
         {
             if (!Loaded || string.IsNullOrEmpty(targetKey))
@@ -233,8 +360,6 @@ namespace SmartQuickTransfer.Core
 
         private static void Prune()
         {
-            // Remove items that have neither meaningful evidence nor corrections (post-decay guards
-            // keep values positive, so this mainly caps unbounded growth).
             for (int i = Model.Count - 1; i >= 0; i--)
             {
                 ItemPreference item = Model[i];
@@ -249,19 +374,23 @@ namespace SmartQuickTransfer.Core
             }
         }
 
-        private static void MaybeSave()
+        /// <summary>Save the current model now. Dirty is cleared only on confirmed success.</summary>
+        private static void SaveNow(string reason)
         {
-            DateTime now = DateTime.UtcNow;
-            if ((now - LastSaveUtc).TotalSeconds >= MinSaveIntervalSeconds)
+            TransferDiagnostics.PreferenceSaveStarted(Dirty, PendingUpdates);
+            PreferenceStore.SaveResult save = PreferenceStore.Save(Model);
+            if (save.Success)
             {
-                PreferenceStore.Save(Model);
-                LastSaveUtc = now;
+                Dirty = false;
+                PendingUpdates = 0;
+                LastSaveUtc = DateTime.UtcNow;
+                LastSaveSource = reason;
             }
-        }
-
-        private static string Round(float value)
-        {
-            return value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+            // On failure we deliberately keep Dirty=true and PendingUpdates so a later safe point retries.
+            TransferDiagnostics.PreferenceSaved(
+                save.Success, Dirty, save.FilePath, save.FileBytes,
+                save.DurationMs.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                save.Success ? reason : save.Reason);
         }
     }
 }

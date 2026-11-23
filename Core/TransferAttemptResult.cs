@@ -18,6 +18,7 @@ namespace SmartQuickTransfer.Core
         internal int RequestedCount;
         internal int MovedCount;
         internal TargetCandidate Candidate;
+        internal string DurationMs = "unavailable";
 
         internal bool IsPartial
         {

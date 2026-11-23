@@ -1,5 +1,6 @@
 using System;
 using SmartQuickTransfer.Core;
+using System.Collections.Generic;
 
 namespace SmartQuickTransfer
 {
@@ -14,11 +15,27 @@ namespace SmartQuickTransfer
             ModId = manifest.ID;
             Log = new ModLog(manifest);
             Settings = TransferSettings.Create(manifest.ID);
+
+            string gameVersions = "";
+            try
+            {
+                if (manifest.GameVersions != null)
+                {
+                    gameVersions = string.Join(",", manifest.GameVersions.ToArray());
+                }
+            }
+            catch (Exception)
+            {
+                gameVersions = "";
+            }
+            TransferDiagnostics.Configure(manifest.ModVersion, gameVersions);
         }
 
         public void OnEnable()
         {
             LogInfo("enabled.");
+            TransferDiagnostics.BeginSession();
+            LogConfigurationSafe();
             try
             {
                 PreferenceLearningService.Initialize();
@@ -33,15 +50,36 @@ namespace SmartQuickTransfer
         {
             try
             {
-                // Final flush of aggregated preferences, then drop in-memory predictions.
-                PreferenceLearningService.Shutdown();
-                PredictionLedger.Clear();
+                // CLASS A: clear temporary predictions. CLASS B: save dirty preferences first.
+                PreferenceLearningService.Shutdown("mod_disable");
+                PredictionLedger.ClearPendingPredictions("mod_disable");
+                TransferDiagnostics.ModUnloading(true, true, false);
+                TransferDiagnostics.Flush(
+                    PredictionLedger.Count,
+                    PreferenceLearningService.ItemCount,
+                    PreferenceLearningService.TargetCount,
+                    PreferenceLearningService.IsDirty,
+                    PreferenceLearningService.LastSaveUtcText);
             }
             catch (Exception e)
             {
                 LogError("failed during shutdown: " + e.Message);
             }
             LogInfo("disabled.");
+        }
+
+        private static void LogConfigurationSafe()
+        {
+            TransferSettings s = Settings;
+            TransferDiagnostics.LogConfiguration(
+                s != null && s.Enabled,
+                s == null || s.PreserveMachineOpen,
+                s == null || s.PreserveContainerOpen,
+                s != null && s.IncludeStorePanels,
+                s == null || s.CustomerDemandDeskPriority,
+                s == null ? "auto" : s.FallbackArea,
+                s == null ? "仓库" : s.MachineOutputArea,
+                s == null || s.Animate);
         }
 
         internal static void LogInfo(string message)

@@ -8,6 +8,12 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <Deterministic>true</Deterministic>
+    <!-- Diagnostic Build enables detailed structured logs. Set -p:SqDiagnostic=false for a lean release. -->
+    <SqDiagnostic Condition="'$(SqDiagnostic)' == ''">true</SqDiagnostic>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SqDiagnostic)' == 'true'">
+    <DefineConstants>$(DefineConstants);SQT_DIAGNOSTIC</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(GameManagedDir)' == ''">
