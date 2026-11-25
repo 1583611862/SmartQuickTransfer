@@ -6,7 +6,7 @@ namespace SmartQuickTransfer.EquipmentWheel
 {
     /// <summary>
     /// GTA5-style annular wheel. The selectable ring is drawn as real annular-sector meshes
-    /// (RingSectorGraphic); item icons and labels sit inside their own sector, with no circular
+    /// (RingSectorGraphic); tool icons and labels sit inside their own sector, with no circular
     /// button backgrounds. The centre is genuinely hollow - only a light information layer is
     /// drawn there, never a big solid disc. Every graphic is a non-raycast target and the canvas
     /// has no GraphicRaycaster, so game UI input is untouched; the controller reads Input directly.
@@ -92,7 +92,7 @@ namespace SmartQuickTransfer.EquipmentWheel
 
             emptyText = Text("SQT_WheelEmpty", root, new Vector2(300f, 80f),
                 Vector2.zero, 18, TextAnchor.MiddleCenter);
-            emptyText.text = "没有可用的 Toolbox 装备\n（右键 / 中键 / Esc 关闭）";
+            emptyText.text = "没有可用的 Toolbox 工具\n（右键 / 中键 / Esc 关闭）";
             emptyText.gameObject.SetActive(false);
 
             root.gameObject.SetActive(false);
@@ -277,7 +277,7 @@ namespace SmartQuickTransfer.EquipmentWheel
         private static string Describe(GameItem item)
         {
             string type = item.IsGameItemType("TOOL") ? "工具"
-                : item.IsGameItemType("MELEE_WEAPON") ? "近战武器" : "Toolbox 装备";
+                : item.IsGameItemType("MELEE_WEAPON") ? "近战武器" : "Toolbox 工具";
             string state = "";
             ItemSelectHandler selector = ItemSelectHandler.current;
             if (selector != null && ReferenceEquals(selector.GetEquippedItem(), item))
