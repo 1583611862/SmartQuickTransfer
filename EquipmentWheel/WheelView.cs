@@ -352,10 +352,8 @@ namespace SmartQuickTransfer.EquipmentWheel
             {
                 state += " · 耐久 " + DurabilityHelper.GetRealDurability(item);
             }
-            if (item.unitCount > 1)
-            {
-                state += " ×" + item.unitCount;
-            }
+            // Usable count is shown once in the name ("工具名×N"); do not repeat the
+            // representative's own unitCount here, which could disagree with the group total.
             return type + state;
         }
 
