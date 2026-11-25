@@ -1,5 +1,6 @@
 using System;
 using SmartQuickTransfer.Core;
+using SmartQuickTransfer.EquipmentWheel;
 using System.Collections.Generic;
 
 namespace SmartQuickTransfer
@@ -44,12 +45,22 @@ namespace SmartQuickTransfer
             {
                 LogError("failed to initialise the learning model: " + e.Message);
             }
+            try
+            {
+                EquipmentWheelController.Initialize();
+            }
+            catch (Exception e)
+            {
+                LogError("failed to initialise the equipment wheel: " + e.Message);
+            }
         }
 
         public void OnDisable()
         {
             try
             {
+                // Close the wheel first so no input stays intercepted after the mod unloads.
+                EquipmentWheelController.Shutdown();
                 // CLASS A: clear temporary predictions. CLASS B: save dirty preferences first.
                 PreferenceLearningService.Shutdown("mod_disable");
                 PredictionLedger.ClearPendingPredictions("mod_disable");

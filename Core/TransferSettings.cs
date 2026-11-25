@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace SmartQuickTransfer.Core
 {
@@ -26,6 +27,16 @@ namespace SmartQuickTransfer.Core
         private ConfigEntry<string> machineOutputArea;
         private ConfigEntry<bool> animate;
         private ConfigEntry<float> animationDuration;
+
+        // Equipment wheel settings live here but are isolated from the double-click business
+        // logic: no wheel value is read by ItemTransferManager, PendingPrediction or the learning
+        // service, and no transfer value is read by the wheel.
+        private ConfigEntry<bool> wheelEnabled;
+        private ConfigEntry<string> wheelKey;
+        private ConfigEntry<bool> wheelIncludeNested;
+        private ConfigEntry<int> wheelPageSize;
+        private ConfigEntry<bool> wheelShowName;
+        private ConfigEntry<bool> wheelAnimation;
 
         internal bool Enabled
         {
@@ -88,6 +99,49 @@ namespace SmartQuickTransfer.Core
             }
         }
 
+        internal bool WheelEnabled
+        {
+            get { return wheelEnabled == null || wheelEnabled.Value; }
+        }
+
+        internal KeyCode WheelKey
+        {
+            get
+            {
+                string value = wheelKey == null ? "Mouse2" : wheelKey.Value;
+                KeyCode parsed;
+                if (!string.IsNullOrEmpty(value) && Enum.TryParse(value, true, out parsed))
+                {
+                    return parsed;
+                }
+                return KeyCode.Mouse2;
+            }
+        }
+
+        internal bool WheelIncludeNested
+        {
+            get { return wheelIncludeNested == null || wheelIncludeNested.Value; }
+        }
+
+        internal int WheelPageSize
+        {
+            get
+            {
+                int value = wheelPageSize == null ? 8 : wheelPageSize.Value;
+                return value < 1 ? 1 : (value > 8 ? 8 : value);
+            }
+        }
+
+        internal bool WheelShowName
+        {
+            get { return wheelShowName == null || wheelShowName.Value; }
+        }
+
+        internal bool WheelAnimation
+        {
+            get { return wheelAnimation == null || wheelAnimation.Value; }
+        }
+
         internal static TransferSettings CreateDefaults()
         {
             return new TransferSettings();
@@ -143,6 +197,32 @@ namespace SmartQuickTransfer.Core
                     () => "从机器取出物品的去向",
                     new[] { TargetAuto, TargetStorage, TargetDesk, TargetShowcase, TargetFrontCounter },
                     () => "双击机器或工具窗口里的物品时，物品存放的位置。默认直接进仓库，满了自动改投桌面。");
+
+                settings.wheelEnabled = config.Define("enable_equipment_wheel", true, "装备轮盘",
+                    () => "启用动态装备轮盘",
+                    () => "开启后，未拖拽物品时按鼠标中键呼出装备轮盘；关闭后中键等原版操作完全恢复。关闭轮盘不影响双击快速转移。");
+
+                settings.wheelKey = config.Define("equipment_wheel_key", "Mouse2", "装备轮盘",
+                    () => "呼出轮盘的按键",
+                    new[] { "Mouse2", "Mouse1", "F", "G", "Q", "E" },
+                    () => "默认鼠标中键。正在拖拽物品时该键始终优先执行原版翻转，不会呼出轮盘。");
+
+                settings.wheelIncludeNested = config.Define("equipment_wheel_include_nested", true, "装备轮盘",
+                    () => "扫描背包与箱子",
+                    () => "开启时递归扫描玩家仓库里背包、箱子等容器中的装备（带防循环与深度保护）；关闭时只扫描顶层格子。");
+
+                settings.wheelPageSize = config.Define("equipment_wheel_page_size", 8, "装备轮盘",
+                    () => "每页装备数量",
+                    1, 8,
+                    () => "每页最多显示几件装备，超过后用鼠标滚轮翻页。范围 1～8。");
+
+                settings.wheelShowName = config.Define("equipment_wheel_show_item_name", true, "装备轮盘",
+                    () => "显示装备名称",
+                    () => "在每个装备图标下方显示名称；关闭时只显示图标与中央信息。");
+
+                settings.wheelAnimation = config.Define("equipment_wheel_animation", true, "装备轮盘",
+                    () => "轮盘动画",
+                    () => "开启时轮盘有展开/收起动画；关闭后立即显示或关闭。动画不影响输入响应。");
             }
             catch (Exception e)
             {
