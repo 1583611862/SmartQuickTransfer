@@ -34,9 +34,27 @@ namespace SmartQuickTransfer.Core
                 if (fromGround)
                 {
                     Branch(traceId, "night_ground");
-                    TransferOutcome outcome = TransferToAfterhourPocket(item, sourceWindow, capture);
+                    // Openable items (first-aid boxes, medicine containers, ...) would be opened by
+                    // the vanilla double-click. On the dumping ground the player wants them put
+                    // away instead, straight into the backpack.
+                    bool openable = item.contentWindow != null && !MachineSlotResolver.IsMachineItem(item);
+                    TransferOutcome outcome = TransferToAfterhourPocket(item, sourceWindow, capture, openable);
                     ReportSpecial(traceId, "night_ground", item, DescribeFinalArea(item), outcome);
                     return outcome;
+                }
+
+                // Dossier/archive-box display signs belong in the display case, not in storage.
+                if (DesktopTransfer.IsShowcaseSpecial(item)
+                    && DesktopTransfer.IsFromDossier(item, sourceWindow))
+                {
+                    GameInventory showcase = DesktopTransfer.ResolveShowcase(item);
+                    if (showcase != null)
+                    {
+                        Branch(traceId, "showcase_special");
+                        TransferOutcome outcome = TransferToShowcase(item, sourceWindow, showcase, capture);
+                        ReportSpecial(traceId, "showcase_special", item, DescribeFinalArea(item), outcome);
+                        return outcome;
+                    }
                 }
 
                 TransferSettings settings = ModEntry.Settings;
@@ -120,8 +138,21 @@ namespace SmartQuickTransfer.Core
 
             if (fromGround)
             {
-                destination = DesktopTransfer.ResolveAfterhourPocket(representative);
+                // Hands first; once they are full the main inventory is the fallback. Openable
+                // items are kept out of the hands and put away directly.
+                bool openable = representative.contentWindow != null
+                    && !MachineSlotResolver.IsMachineItem(representative);
+                destination = openable
+                    ? DesktopTransfer.ResolveAfterhourStorage(representative)
+                    : (DesktopTransfer.ResolveAfterhourPocket(representative)
+                       ?? DesktopTransfer.ResolveAfterhourStorage(representative));
                 destinationWindow = entry.afterhourWindow;
+            }
+            else if (DesktopTransfer.IsShowcaseSpecial(representative)
+                && DesktopTransfer.IsFromDossier(representative, sourceWindow))
+            {
+                destination = DesktopTransfer.ResolveShowcase(representative);
+                destinationWindow = entry != null ? entry.showcaseWindow : null;
             }
             else
             {
@@ -389,9 +420,18 @@ namespace SmartQuickTransfer.Core
             }
         }
 
-        private static TransferOutcome TransferToAfterhourPocket(GameItem item, PixelWindow sourceWindow, FlightCapture capture)
+        private static TransferOutcome TransferToAfterhourPocket(GameItem item, PixelWindow sourceWindow,
+            FlightCapture capture, bool preferBackpack = false)
         {
-            GameInventory pocket = DesktopTransfer.ResolveAfterhourPocket(item);
+            // Openable items skip the hands entirely and go straight to the backpack.
+            GameInventory pocket = preferBackpack
+                ? DesktopTransfer.ResolveAfterhourStorage(item)
+                : DesktopTransfer.ResolveAfterhourPocket(item);
+            if (pocket == null && !preferBackpack)
+            {
+                // Both hands are occupied: use the main inventory instead of doing nothing.
+                pocket = DesktopTransfer.ResolveAfterhourStorage(item);
+            }
             if (pocket == null)
             {
                 ModEntry.LogInfo("afterhour backpack and pockets cannot accept " + DescribeItem(item) + "; item kept in place.");
@@ -433,6 +473,27 @@ namespace SmartQuickTransfer.Core
                 + "' into " + DesktopTransfer.DescribeArea(desk) + "; item now in "
                 + DescribeFinalArea(item) + ".");
             return TransferOutcome.MovedToCustomerDesk;
+        }
+
+        private static TransferOutcome TransferToShowcase(GameItem item, PixelWindow sourceWindow,
+            GameInventory showcase, FlightCapture capture)
+        {
+            SlotMarker slot = FindSlot(showcase, item);
+            int requested = item.unitCount;
+            int moved = GuardedMove(showcase, item, sourceWindow);
+            if (moved <= 0)
+            {
+                ModEntry.LogError("showcase transfer of " + DescribeItem(item)
+                    + " moved nothing; item kept in place.");
+                return TransferOutcome.Failed;
+            }
+
+            TransferAnimation.Play(capture, item, slot, ShouldHideSource(capture, item, moved, requested));
+
+            ModEntry.LogInfo("dossier display item " + DescribeItem(item) + "; moved " + moved + " x "
+                + DescribeItem(item) + " into " + DesktopTransfer.DescribeArea(showcase)
+                + "; item now in " + DescribeFinalArea(item) + ".");
+            return TransferOutcome.MovedToWindow;
         }
 
         private static TransferOutcome TransferToFallback(GameItem item, PixelWindow sourceWindow, FlightCapture capture, bool fromMachine)

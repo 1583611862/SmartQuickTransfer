@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using HarmonyLib;
+using UnityEngine;
 using SmartQuickTransfer.Core;
 using SmartQuickTransfer.Transfer;
 
@@ -16,6 +17,10 @@ namespace SmartQuickTransfer.Patches
         // accessor. Resolve it once; if a game update renames it, batch transfer degrades
         // gracefully to the original single-item behaviour instead of breaking the mod.
         private static readonly FieldInfo SelectedItemsField = ResolveSelectedItemsField();
+
+        // A batch handled by either patch owns the double-click for that frame. The other input
+        // handler must not follow it with a second, single-item transfer of the same item.
+        internal static int LastBatchFrame = -1;
 
         private static FieldInfo ResolveSelectedItemsField()
         {
@@ -41,6 +46,10 @@ namespace SmartQuickTransfer.Patches
                 {
                     return true;
                 }
+                if (Time.frameCount == LastBatchFrame)
+                {
+                    return false;
+                }
 
                 TransferSettings settings = ModEntry.Settings;
                 if (settings != null && !settings.Enabled)
@@ -65,55 +74,14 @@ namespace SmartQuickTransfer.Patches
                 }
 
                 // A band selection is one batch: a single shared destination and one guarded
-                // commit of every picked item, mirroring the base game's group placement. It is
-                // NOT N independent smart transfers. Items that cannot be smart-transferred are
-                // left untouched (and reported) so their base-game interaction is preserved.
-                List<GameItem> batch = CollectSelection();
-                if (batch != null && batch.Count > 1)
+                // commit of every picked item, mirroring the base game's group placement.
+                PixelWindow batchWindow;
+                if (TryBatchTransfer(newItem, out batchWindow))
                 {
-                    List<GameItem> eligible = new List<GameItem>();
-                    for (int i = 0; i < batch.Count; i++)
-                    {
-                        GameItem item = batch[i];
-                        string itemReason;
-                        PixelWindow itemWindow;
-                        if (!CanSmartTransfer(item, settings, out itemReason, out itemWindow))
-                        {
-                            Original("batch_skip:" + itemReason, item);
-                            continue;
-                        }
-                        eligible.Add(item);
-                    }
-
-                    if (eligible.Count > 0)
-                    {
-                        string batchTrace = TransferDiagnostics.BeginTrace(
-                            newItem.identifier,
-                            newItem.unitCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                            WindowActivityManager.Describe(primaryWindow),
-                            StableIdentityResolver.ResolveInventoryOnly(newItem.parentInventory));
-                        int moved = 0;
-                        try
-                        {
-                            moved = ItemTransferManager.TransferBatch(eligible, primaryWindow, batchTrace);
-                            sw.Stop();
-                            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.DoubleClick,
-                                sw.Elapsed.TotalMilliseconds);
-                            TransferDiagnostics.EndTrace(
-                                sw.Elapsed.TotalMilliseconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-                        }
-                        catch (Exception e)
-                        {
-                            TransferDiagnostics.ErrorThrottled("batch_double_click", "batch failed: " + e.Message);
-                            throw;
-                        }
-                        if (moved > 0)
-                        {
-                            ClearSelection();
-                            return false;
-                        }
-                    }
-                    // Nothing could be moved as a batch; fall through to the single-item path.
+                    sw.Stop();
+                    TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.DoubleClick,
+                        sw.Elapsed.TotalMilliseconds);
+                    return false;
                 }
 
                 TransferOne(newItem, primaryWindow);
@@ -147,6 +115,86 @@ namespace SmartQuickTransfer.Patches
                 TransferDiagnostics.ErrorThrottled("double_click", "transfer failed: " + e.Message);
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Moves the whole band selection in one commit. Shared by the native double-click patch
+        /// and the band-selection patch, because the game's multi-select handler otherwise
+        /// consumes the click and clears the selection before the double-click handler sees it.
+        /// Returns true only when at least one unit was actually moved.
+        /// </summary>
+        internal static bool TryBatchTransfer(GameItem clicked, out PixelWindow sourceWindow)
+        {
+            sourceWindow = null;
+            if (clicked == null || Time.frameCount == LastBatchFrame)
+            {
+                return false;
+            }
+
+            TransferSettings settings = ModEntry.Settings;
+            if (settings != null && !settings.Enabled || ItemPinHelper.BlocksClicks)
+            {
+                return false;
+            }
+            string reason;
+            if (!CanSmartTransfer(clicked, settings, out reason, out sourceWindow))
+            {
+                return false;
+            }
+
+            List<GameItem> batch = CollectSelection();
+            if (batch == null || batch.Count < 2)
+            {
+                return false;
+            }
+
+            List<GameItem> eligible = new List<GameItem>();
+            for (int i = 0; i < batch.Count; i++)
+            {
+                GameItem item = batch[i];
+                string itemReason;
+                PixelWindow itemWindow;
+                if (!CanSmartTransfer(item, settings, out itemReason, out itemWindow))
+                {
+                    Original("batch_skip:" + itemReason, item);
+                    continue;
+                }
+                eligible.Add(item);
+            }
+            if (eligible.Count == 0)
+            {
+                return false;
+            }
+
+            string batchTrace = TransferDiagnostics.BeginTrace(
+                clicked.identifier,
+                clicked.unitCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                WindowActivityManager.Describe(sourceWindow),
+                StableIdentityResolver.ResolveInventoryOnly(clicked.parentInventory));
+            Stopwatch batchSw = Stopwatch.StartNew();
+            int moved = 0;
+            try
+            {
+                moved = ItemTransferManager.TransferBatch(eligible, sourceWindow, batchTrace);
+            }
+            catch (Exception e)
+            {
+                TransferDiagnostics.ErrorThrottled("batch_double_click", "batch failed: " + e.Message);
+                throw;
+            }
+
+            batchSw.Stop();
+            TransferDiagnostics.RecordDuration(TransferDiagnostics.Duration.DoubleClick,
+                batchSw.Elapsed.TotalMilliseconds);
+            TransferDiagnostics.EndTrace(
+                batchSw.Elapsed.TotalMilliseconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+            if (moved <= 0)
+            {
+                return false;
+            }
+            LastBatchFrame = Time.frameCount;
+            ClearSelection();
+            return true;
         }
 
         /// <summary>
@@ -220,7 +268,12 @@ namespace SmartQuickTransfer.Patches
                 reason = "machine_open";
                 return false;
             }
-            if (!machinery && contentWindow != null && settings != null && settings.PreserveContainerOpen)
+            // On the night ground the base-game interaction would open the container in the
+            // middle of looting. Put it away in the backpack instead of opening it there.
+            bool openableOnGround = !machinery && contentWindow != null
+                && DesktopTransfer.IsOnNightGround(item);
+            if (!machinery && contentWindow != null && settings != null
+                && settings.PreserveContainerOpen && !openableOnGround)
             {
                 reason = "container_open";
                 return false;

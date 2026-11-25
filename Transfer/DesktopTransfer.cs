@@ -15,6 +15,9 @@ namespace SmartQuickTransfer.Transfer
     /// </summary>
     internal static class DesktopTransfer
     {
+        // ShowcaseHelper.SHOWCASE_SPECIAL_ITEM_TAG in the game assembly.
+        private const string ShowcaseSpecialTag = "SHOWCASE_SPECIAL_ITEM_TAG";
+
         internal static GameInventory Resolve(GameItem item, PixelWindow sourceWindow, bool fromMachine)
         {
             if (item == null)
@@ -102,6 +105,91 @@ namespace SmartQuickTransfer.Transfer
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// True when the item is lying on the night ground (afterhour dumping ground), regardless
+        /// of which window happens to be focused. Used to give that location its own routing rules.
+        /// </summary>
+        internal static bool IsOnNightGround(GameItem item)
+        {
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            return entry != null && item != null
+                && ReferenceEquals(item.parentInventory, entry.afterhourInventory);
+        }
+
+        /// <summary>Showcase signs and other display-only special items carry this native tag.</summary>
+        internal static bool IsShowcaseSpecial(GameItem item)
+        {
+            if (item == null)
+            {
+                return false;
+            }
+            try
+            {
+                return item.IsTag(ShowcaseSpecialTag);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>True when the item is being viewed inside the dossier (archive box) window.</summary>
+        internal static bool IsFromDossier(GameItem item, PixelWindow sourceWindow)
+        {
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null || entry.dossier == null || sourceWindow == null)
+            {
+                return false;
+            }
+            try
+            {
+                return ReferenceEquals(sourceWindow, entry.dossier.contentWindow);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>The main inventory grid - the "backpack" the player sees outside the shop.</summary>
+        internal static GameInventory ResolveAfterhourStorage(GameItem item)
+        {
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null || item == null)
+            {
+                return null;
+            }
+            return CanAccept(entry.invElement, item, "afterhour storage");
+        }
+
+        /// <summary>The display case. Showcase-special items taken out of the dossier land here.</summary>
+        internal static GameInventory ResolveShowcase(GameItem item)
+        {
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null || item == null)
+            {
+                return null;
+            }
+            return CanAccept(entry.showcaseElement, item, "showcase");
+        }
+
+        private static GameInventory CanAccept(GameInventory candidate, GameItem item, string label)
+        {
+            if (candidate == null || ReferenceEquals(candidate, item.parentInventory) || IsInsideItem(candidate, item))
+            {
+                return null;
+            }
+            try
+            {
+                return candidate.TryFindOneValidInventorySlot(item) != null ? candidate : null;
+            }
+            catch (Exception e)
+            {
+                ModEntry.LogError(label + " slot check failed: " + e.Message);
+                return null;
+            }
         }
 
         internal static GameInventory ResolveDesk(GameItem item)
