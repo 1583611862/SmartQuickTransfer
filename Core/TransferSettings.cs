@@ -199,8 +199,8 @@ namespace SmartQuickTransfer.Core
                     () => "双击机器或工具窗口里的物品时，物品存放的位置。默认直接进仓库，满了自动改投桌面。");
 
                 settings.wheelEnabled = config.Define("enable_equipment_wheel", true, "装备轮盘",
-                    () => "武器轮盘（鼠标中键）",
-                    () => "开启后，未拖拽物品时按鼠标中键呼出武器轮盘；关闭后中键等原版操作完全恢复。关闭轮盘不影响双击快速转移。");
+                    () => "装备轮盘",
+                    () => "开启后，未拖拽物品时按鼠标中键呼出装备轮盘；关闭后中键等原版操作完全恢复。关闭轮盘不影响双击快速转移。");
 
                 settings.wheelKey = config.Define("equipment_wheel_key", "Mouse2", "装备轮盘",
                     () => "呼出轮盘的按键",
