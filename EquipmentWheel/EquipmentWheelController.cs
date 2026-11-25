@@ -101,8 +101,8 @@ namespace SmartQuickTransfer.EquipmentWheel
                 return;
             }
 
-            // Recomputed every frame so resolution and DPI changes cannot desync selection.
-            centre = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            // centre stays locked to the pointer position captured on open. Selection and the
+            // drawn wheel share it; moving the mouse only changes which sector is selected.
 
             if (Pressed(KeyCode.Escape) || Pressed(KeyCode.Mouse1) || Pressed(openKey))
             {
@@ -208,7 +208,11 @@ namespace SmartQuickTransfer.EquipmentWheel
                 selector.Reset();
                 RefreshPage();
 
-                centre = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+                // Lock the wheel centre to the pointer at the moment of opening. It must NOT
+                // follow the pointer afterwards, otherwise the mouse stays inside the hollow
+                // dead zone and can never select a sector.
+                centre = WheelView.ClampCentre(Input.mousePosition);
+                view.SetCentre(centre);
                 view.Show();
                 animationElapsed = 0f;
                 if (!useAnimation)

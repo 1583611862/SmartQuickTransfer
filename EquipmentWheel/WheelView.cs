@@ -23,6 +23,9 @@ namespace SmartQuickTransfer.EquipmentWheel
         private RectTransform root;
         private CanvasGroup group;
         private Image scrim;
+        // Everything that belongs to the wheel itself hangs under this container so the whole
+        // wheel can be translated to the pointer position. The scrim stays on the full-screen root.
+        private RectTransform wheelRoot;
         private readonly List<RingSectorGraphic> sectors = new List<RingSectorGraphic>();
         private readonly List<Slot> slots = new List<Slot>();
         private Image pointer;
@@ -70,6 +73,16 @@ namespace SmartQuickTransfer.EquipmentWheel
             // The centre stays effectively hollow: no solid element covers the gameplay below.
             scrim = FullScreenImage("SQT_WheelScrim", root, new Color(0.02f, 0.03f, 0.05f, 0.30f));
 
+            // Wheel container: centred on the canvas by default, moved to the pointer on open.
+            GameObject wheelObject = new GameObject("SQT_WheelRoot", typeof(RectTransform));
+            wheelRoot = wheelObject.GetComponent<RectTransform>();
+            wheelRoot.SetParent(root, false);
+            wheelRoot.anchorMin = new Vector2(0.5f, 0.5f);
+            wheelRoot.anchorMax = new Vector2(0.5f, 0.5f);
+            wheelRoot.pivot = new Vector2(0.5f, 0.5f);
+            wheelRoot.sizeDelta = Vector2.zero;
+            wheelRoot.anchoredPosition = Vector2.zero;
+
             for (int i = 0; i < PoolSize; i++)
             {
                 sectors.Add(CreateSector(i));
@@ -79,18 +92,18 @@ namespace SmartQuickTransfer.EquipmentWheel
                 slots.Add(CreateSlot(i));
             }
 
-            pointer = Image("SQT_WheelPointer", root, new Vector2(40f, 3f),
+            pointer = Image("SQT_WheelPointer", wheelRoot, new Vector2(40f, 3f),
                 new Color(0.62f, 0.90f, 1f, 0.92f), null);
             pointer.rectTransform.pivot = new Vector2(0f, 0.5f);
 
-            nameText = Text("SQT_WheelName", root, new Vector2(180f, 30f),
+            nameText = Text("SQT_WheelName", wheelRoot, new Vector2(180f, 30f),
                 new Vector2(0f, 34f), 19, TextAnchor.MiddleCenter);
-            detailText = Text("SQT_WheelDetail", root, new Vector2(190f, 24f),
+            detailText = Text("SQT_WheelDetail", wheelRoot, new Vector2(190f, 24f),
                 new Vector2(0f, 8f), 13, TextAnchor.MiddleCenter);
-            pageText = Text("SQT_WheelPage", root, new Vector2(190f, 22f),
+            pageText = Text("SQT_WheelPage", wheelRoot, new Vector2(190f, 22f),
                 new Vector2(0f, -20f), 12, TextAnchor.MiddleCenter);
 
-            emptyText = Text("SQT_WheelEmpty", root, new Vector2(300f, 80f),
+            emptyText = Text("SQT_WheelEmpty", wheelRoot, new Vector2(300f, 80f),
                 Vector2.zero, 18, TextAnchor.MiddleCenter);
             emptyText.text = "没有可用的 Toolbox 工具\n（右键 / 中键 / Esc 关闭）";
             emptyText.gameObject.SetActive(false);
@@ -103,7 +116,7 @@ namespace SmartQuickTransfer.EquipmentWheel
             GameObject go = new GameObject("SQT_WheelSector" + index,
                 typeof(RectTransform), typeof(CanvasRenderer));
             RectTransform rect = go.GetComponent<RectTransform>();
-            rect.SetParent(root, false);
+            rect.SetParent(wheelRoot, false);
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
@@ -120,7 +133,7 @@ namespace SmartQuickTransfer.EquipmentWheel
             Slot slot = new Slot();
             slot.Object = new GameObject("SQT_WheelItem" + index, typeof(RectTransform));
             RectTransform rect = slot.Object.GetComponent<RectTransform>();
-            rect.SetParent(root, false);
+            rect.SetParent(wheelRoot, false);
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
@@ -128,7 +141,7 @@ namespace SmartQuickTransfer.EquipmentWheel
             slot.Icon = Image("Icon", rect, new Vector2(48f, 48f), Color.white, null);
             slot.Icon.preserveAspect = true;
 
-            slot.Label = Text("Name", root, new Vector2(120f, 20f),
+            slot.Label = Text("Name", wheelRoot, new Vector2(120f, 20f),
                 Vector2.zero, 13, TextAnchor.MiddleCenter);
 
             slot.Object.SetActive(false);
@@ -233,6 +246,50 @@ namespace SmartQuickTransfer.EquipmentWheel
                     sectors[i].Tick(dt);
                 }
             }
+        }
+
+        /// <summary>
+        /// Place the wheel centre at a screen point (Unity screen pixels). The controller passes
+        /// the mouse position captured on open; it stays fixed while the pointer selects sectors.
+        /// Clamping keeps the full outer circle on screen.
+        /// </summary>
+        internal void SetCentre(Vector2 screenCentre)
+        {
+            Ensure();
+            Vector2 safe = ClampCentre(screenCentre);
+            // root is a full-screen rect pivoted at its centre, so its local origin is the
+            // screen centre. wheelRoot is anchored there; the offset is centre minus that origin.
+            wheelRoot.anchoredPosition = new Vector2(
+                safe.x - Screen.width * 0.5f,
+                safe.y - Screen.height * 0.5f);
+        }
+
+        /// <summary>
+        /// Keep the whole wheel on screen. Shared with the controller so selection uses exactly
+        /// the same centre the wheel is drawn at.
+        /// </summary>
+        internal static Vector2 ClampCentre(Vector2 screenCentre)
+        {
+            float margin = WheelGeometry.OuterRadius + 8f;
+            float x;
+            float y;
+            if (Screen.width >= margin * 2f)
+            {
+                x = Mathf.Clamp(screenCentre.x, margin, Screen.width - margin);
+            }
+            else
+            {
+                x = Screen.width * 0.5f;
+            }
+            if (Screen.height >= margin * 2f)
+            {
+                y = Mathf.Clamp(screenCentre.y, margin, Screen.height - margin);
+            }
+            else
+            {
+                y = Screen.height * 0.5f;
+            }
+            return new Vector2(x, y);
         }
 
         internal void Show()
