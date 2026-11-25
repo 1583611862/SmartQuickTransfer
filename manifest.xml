@@ -3,7 +3,7 @@
   <ID>smart_quick_transfer</ID>
   <Name>凌波丽海苔的智能双击</Name>
   <Author>凌波丽海苔</Author>
-  <ModVersion>2.1.1</ModVersion>
+  <ModVersion>2.1.2</ModVersion>
   <Description>双击物品智能投放并按你的纠错在本地学习；新增 GTA5 风格动态装备轮盘：中键呼出，自动检索仓库中所有符合原版 Toolbox 准入规则的装备，鼠标指向并左键确认即可装备，无需提前放入 1～9 快捷栏。Double-click to smartly transfer items with local habit learning; new GTA5-style equipment wheel opens with middle click and equips any Toolbox-compatible item straight from storage.</Description>
   <GameVersions>
     <Version>0.46</Version>

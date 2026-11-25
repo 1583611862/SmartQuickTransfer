@@ -3,19 +3,21 @@ using UnityEngine;
 namespace SmartQuickTransfer.EquipmentWheel
 {
     /// <summary>
-    /// Pure angular selector: the chosen slot is derived from the mouse direction, never from UI
-    /// hierarchy or raycast order. Slot 0 sits at 12 o'clock and slots advance clockwise.
+    /// Picks a slot from the mouse direction, but ONLY when the pointer is inside the real
+    /// annulus. The hollow centre and the area outside the outer circle select nothing,
+    /// matching the drawn sectors exactly. Uses WheelGeometry, the same geometry as the mesh
+    /// renderer, so visuals and selection can never disagree.
     /// </summary>
     internal sealed class WheelSelector
     {
-        internal const float DeadZonePixels = 48f;
-        private const float HysteresisRadians = 0.06f; // ~3.4 degrees of border stability
+        private const float HysteresisRadians = 0.05f; // ~3 degrees of border stability
 
         private int count;
         private int selected = -1;
 
         internal int Count { get { return count; } }
         internal int Selected { get { return selected; } }
+        internal static float DeadZoneRadius { get { return WheelGeometry.InnerRadius; } }
 
         internal void SetCount(int value)
         {
@@ -40,41 +42,46 @@ namespace SmartQuickTransfer.EquipmentWheel
         {
             if (count <= 0)
             {
-                selected = -1;
-                return false;
-            }
-            if (count == 1)
-            {
-                bool changed = selected != 0;
-                selected = 0;
-                return changed;
-            }
-
-            float dx = mouse.x - center.x;
-            float dy = mouse.y - center.y;
-            // Inside the dead zone keep the previous choice instead of jumping to a random slot.
-            if (dx * dx + dy * dy < DeadZonePixels * DeadZonePixels)
-            {
+                if (selected != -1)
+                {
+                    selected = -1;
+                    return true;
+                }
                 return false;
             }
 
-            float sector = 2f * Mathf.PI / count;
-            float fromTop = Mathf.Atan2(dx, dy); // 0 = up, +PI/2 = right
-            if (fromTop < 0f)
+            Vector2 local = new Vector2(mouse.x - center.x, mouse.y - center.y);
+
+            // Hollow centre: select nothing (clear), so the element under the pointer is not
+            // treated as an item. Outside the wheel: ignore, keeping the last choice stable.
+            if (local.sqrMagnitude < WheelGeometry.InnerRadius * WheelGeometry.InnerRadius)
             {
-                fromTop += 2f * Mathf.PI;
+                if (selected != -1)
+                {
+                    selected = -1;
+                    return true;
+                }
+                return false;
             }
-            int target = Mathf.FloorToInt((fromTop + sector * 0.5f) / sector) % count;
+            if (local.sqrMagnitude > WheelGeometry.OuterRadius * WheelGeometry.OuterRadius)
+            {
+                return false;
+            }
+
+            float angle = WheelGeometry.AngleOf(local);
+            int target = WheelGeometry.IndexAt(angle, count);
+            if (target < 0)
+            {
+                return false;
+            }
 
             if (target != selected && selected >= 0 && selected < count)
             {
-                // Border hysteresis: only switch when the mouse is clearly closer to the
-                // target slot centre than to the current one. This stops adjacent sectors
-                // from flickering when the pointer sits on their boundary.
-                float currentCentre = selected * sector;
-                float targetCentre = target * sector;
-                float toCurrent = Mathf.Abs(AngularDelta(fromTop, currentCentre));
-                float toTarget = Mathf.Abs(AngularDelta(fromTop, targetCentre));
+                // Border hysteresis: only switch when the pointer is clearly closer to the
+                // target sector centre, avoiding flicker on radial divider lines.
+                float span = WheelGeometry.SectorSpan(count);
+                float toCurrent = Mathf.Abs(AngularDelta(angle, WheelGeometry.CentreAngle(selected, count)));
+                float toTarget = Mathf.Abs(AngularDelta(angle, WheelGeometry.CentreAngle(target, count)));
                 if (toTarget + HysteresisRadians >= toCurrent)
                 {
                     return false;
@@ -86,16 +93,15 @@ namespace SmartQuickTransfer.EquipmentWheel
             return previous != selected;
         }
 
-        /// <summary>Centre of a slot icon in screen pixels.</summary>
-        internal static Vector2 PositionFor(Vector2 center, float radius, int index, int count)
+        /// <summary>Visual centre of an item, taken from the shared annular geometry.</summary>
+        internal static Vector2 PositionFor(Vector2 center, int index, int count)
         {
             if (count <= 0)
             {
                 return center;
             }
-            float angle = index * 2f * Mathf.PI / count;
-            return new Vector2(center.x + Mathf.Sin(angle) * radius,
-                center.y + Mathf.Cos(angle) * radius);
+            Vector2 offset = WheelGeometry.PointAt(WheelGeometry.IconRadius, WheelGeometry.CentreAngle(index, count));
+            return new Vector2(center.x + offset.x, center.y + offset.y);
         }
 
         private static float AngularDelta(float a, float b)

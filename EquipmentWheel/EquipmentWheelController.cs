@@ -120,6 +120,8 @@ namespace SmartQuickTransfer.EquipmentWheel
             {
                 view.UpdateSelection(selector.Selected, pageItems);
             }
+            // Advance the annular sector highlight transition every frame (unscaled).
+            view.Tick(Time.unscaledDeltaTime);
 
             if (Pressed(KeyCode.Mouse0) && state != WheelState.Executing)
             {
