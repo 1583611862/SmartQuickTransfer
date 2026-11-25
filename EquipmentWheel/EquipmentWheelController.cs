@@ -18,8 +18,8 @@ namespace SmartQuickTransfer.EquipmentWheel
 
         private readonly WheelView view = new WheelView();
         private readonly WheelSelector selector = new WheelSelector();
-        private readonly List<GameItem> cached = new List<GameItem>();
-        private readonly List<GameItem> pageItems = new List<GameItem>();
+        private readonly List<ToolGroup> cached = new List<ToolGroup>();
+        private readonly List<ToolGroup> pageItems = new List<ToolGroup>();
 
         private WheelState state = WheelState.Closed;
         private Vector2 centre;
@@ -236,12 +236,12 @@ namespace SmartQuickTransfer.EquipmentWheel
             {
                 return;
             }
-            GameItem item = pageItems[selector.Selected];
+            ToolGroup group = pageItems[selector.Selected];
             state = WheelState.Executing;
-            bool equipped = WheelExecutor.TryEquip(item);
+            bool equipped = WheelExecutor.TryEquip(group);
             if (equipped)
             {
-                ModEntry.LogInfo("equipment wheel: equipped " + item.GetDisplayName(true) + ".");
+                ModEntry.LogInfo("equipment wheel: equipped " + group.DisplayName() + ".");
                 Close();
             }
             else

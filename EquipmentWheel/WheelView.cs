@@ -149,7 +149,7 @@ namespace SmartQuickTransfer.EquipmentWheel
         }
 
         /// <summary>Rebuild the visible page. Called on open and on page change only.</summary>
-        internal void SetPage(List<GameItem> items, int pageIndex, int pageCount, bool showName)
+        internal void SetPage(List<ToolGroup> items, int pageIndex, int pageCount, bool showName)
         {
             Ensure();
             int count = Mathf.Min(items.Count, PoolSize);
@@ -171,18 +171,20 @@ namespace SmartQuickTransfer.EquipmentWheel
                 float angle = WheelGeometry.CentreAngle(i, count);
                 Vector2 iconPos = WheelGeometry.PointAt(WheelGeometry.IconRadius, angle);
 
+                ToolGroup group = items[i];
+                GameItem representative = group == null ? null : group.Representative;
                 RectTransform slotRect = slots[i].Object.GetComponent<RectTransform>();
                 slotRect.anchoredPosition = iconPos;
                 slots[i].Icon.rectTransform.sizeDelta = new Vector2(iconSize, iconSize);
-                slots[i].Icon.sprite = ResolveIcon(items[i]);
+                slots[i].Icon.sprite = ResolveIcon(representative);
                 slots[i].Icon.enabled = slots[i].Icon.sprite != null;
 
-                if (showName && items[i] != null)
+                if (showName && group != null)
                 {
                     Vector2 labelPos = WheelGeometry.PointAt(WheelGeometry.IconRadius + labelOffset, angle);
                     RectTransform labelRect = slots[i].Label.rectTransform;
                     labelRect.anchoredPosition = labelPos;
-                    slots[i].Label.text = SafeName(items[i], 12);
+                    slots[i].Label.text = SafeName(group, 12);
                     slots[i].Label.gameObject.SetActive(true);
                 }
             }
@@ -196,7 +198,7 @@ namespace SmartQuickTransfer.EquipmentWheel
             pointer.enabled = false;
         }
 
-        internal void UpdateSelection(int selected, List<GameItem> items)
+        internal void UpdateSelection(int selected, List<ToolGroup> items)
         {
             for (int i = 0; i < sectors.Count; i++)
             {
@@ -216,8 +218,9 @@ namespace SmartQuickTransfer.EquipmentWheel
                 slot.Icon.color = active ? Color.white : new Color(0.80f, 0.84f, 0.90f, 0.95f);
             }
 
-            GameItem item = selected >= 0 && selected < items.Count ? items[selected] : null;
-            if (item == null)
+            ToolGroup group = selected >= 0 && selected < items.Count ? items[selected] : null;
+            GameItem item = group == null ? null : group.Representative;
+            if (group == null || item == null)
             {
                 nameText.text = "";
                 detailText.text = "";
@@ -232,7 +235,7 @@ namespace SmartQuickTransfer.EquipmentWheel
             pointer.rectTransform.localEulerAngles = new Vector3(0f, 0f, 90f - angle * Mathf.Rad2Deg);
             pointer.enabled = true;
 
-            nameText.text = item.GetDisplayName(true);
+            nameText.text = group.DisplayName();
             detailText.text = Describe(item);
         }
 
@@ -377,14 +380,23 @@ namespace SmartQuickTransfer.EquipmentWheel
             }
         }
 
-        private static string SafeName(GameItem item, int max)
+        /// <summary>
+        /// Sector label: tool name followed by the usable count, e.g. "水质检测试剂×5".
+        /// Truncate only the name so the count suffix is always readable.
+        /// </summary>
+        private static string SafeName(ToolGroup group, int max)
         {
-            string value = item.GetDisplayName(true);
+            GameItem rep = group == null ? null : group.Representative;
+            string value = rep == null ? group.Identifier : rep.GetDisplayName(true);
             if (string.IsNullOrEmpty(value))
             {
-                return "?";
+                value = "?";
             }
-            return value.Length > max ? value.Substring(0, max - 1) + "…" : value;
+            if (value.Length > max)
+            {
+                value = value.Substring(0, max - 1) + "…";
+            }
+            return value + "×" + group.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static Image FullScreenImage(string name, RectTransform parent, Color color)

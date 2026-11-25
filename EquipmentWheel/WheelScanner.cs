@@ -10,19 +10,23 @@ namespace SmartQuickTransfer.EquipmentWheel
     /// goods for sale (front counter / showcase), the trash, sold buffer and machine internals are
     /// intentionally not roots. Items are still filtered by the native owned + Toolbox predicate,
     /// so a non-owned item that shares a grid with the player's stock never enters the wheel.
+    ///
+    /// Eligible instances are grouped by identifier into ToolGroup entries: identical tools show
+    /// as ONE sector with a usable count, while every distinct instance is retained for execution.
     /// </summary>
     internal sealed class WheelScanner
     {
         private const int MaxDepth = 16;
+        private const int MaxInstances = 256;
         private const int MaxResults = 128;
 
-        internal static List<GameItem> Scan(bool includeNested)
+        internal static List<ToolGroup> Scan(bool includeNested)
         {
-            List<GameItem> result = new List<GameItem>();
+            List<GameItem> found = new List<GameItem>();
             EmporiumEntry emporium = EmporiumEntry.Instance;
             if (emporium == null)
             {
-                return result;
+                return new List<ToolGroup>();
             }
 
             // Only player-owned storage areas. Pagination is a UI concern: each of these grids is
@@ -42,16 +46,34 @@ namespace SmartQuickTransfer.EquipmentWheel
 
             for (int i = 0; i < roots.Length; i++)
             {
-                Walk(roots[i], 0, includeNested, visitedNodes, visitedReferences, visitedIds, result);
+                Walk(roots[i], 0, includeNested, visitedNodes, visitedReferences, visitedIds, found);
             }
-            return result;
+
+            // Group by identifier: same tool -> one sector with a count. Instance-level de-dup
+            // (reference + uniqueId) already happened in Walk, so one physical item counts once.
+            List<ToolGroup> groups = new List<ToolGroup>();
+            Dictionary<string, ToolGroup> byId = new Dictionary<string, ToolGroup>();
+            for (int i = 0; i < found.Count && groups.Count < MaxResults; i++)
+            {
+                GameItem item = found[i];
+                string key = item.identifier ?? string.Empty;
+                ToolGroup group;
+                if (!byId.TryGetValue(key, out group))
+                {
+                    group = new ToolGroup(key);
+                    byId.Add(key, group);
+                    groups.Add(group);
+                }
+                group.Add(item);
+            }
+            return groups;
         }
 
         private static void Walk(GraphNodeStorage node, int depth, bool includeNested,
             HashSet<GraphNodeStorage> visitedNodes, HashSet<GameItem> visitedReferences,
             HashSet<int> visitedIds, List<GameItem> result)
         {
-            if (node == null || depth > MaxDepth || result.Count >= MaxResults)
+            if (node == null || depth > MaxDepth || result.Count >= MaxInstances)
             {
                 return;
             }
@@ -67,9 +89,8 @@ namespace SmartQuickTransfer.EquipmentWheel
             {
                 if (WheelEligibility.IsToolboxAdmitted(item))
                 {
-                    // Reference identity keeps two physically distinct copies of the same item
-                    // (same identifier) separate, while uniqueId suppresses the same instance
-                    // being reached through more than one path.
+                    // Reference identity + uniqueId suppress the same physical instance being
+                    // counted twice; two distinct copies of one tool still both get counted.
                     bool newReference = visitedReferences.Add(item);
                     int id = item.uniqueId;
                     bool newId = id <= 0 || visitedIds.Add(id);
