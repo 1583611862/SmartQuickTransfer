@@ -57,7 +57,7 @@ namespace SmartQuickTransfer.Core
 
         internal bool IncludeStorePanels
         {
-            get { return includeStorePanels != null && includeStorePanels.Value; }
+            get { return includeStorePanels == null || includeStorePanels.Value; }
         }
 
         internal bool CustomerDemandDeskPriority
@@ -180,9 +180,9 @@ namespace SmartQuickTransfer.Core
                     0.1f, 0.6f,
                     () => "飞行动画的总时长，0.20 到 0.28 之间最接近预期手感。");
 
-                settings.includeStorePanels = config.Define("include_store_panels", false, "目标选择",
+                settings.includeStorePanels = config.Define("include_store_panels", true, "目标选择",
                     () => "常驻存放面板也可作为目标",
-                    () => "开启后，仓库、桌面、展示柜、前台柜台、夜间地面这些常驻面板本身也能成为转移目标；关闭时它们只作为兜底存放区。");
+                    () => "开启后，仓库、桌面、展示柜、前台柜台、夜间地面这些常驻面板本身也能成为转移目标，双击会送到你最近打开或点击的那个面板；关闭时它们只作为兜底存放区。");
 
                 settings.customerDemandDeskPriority = config.Define("customer_demand_desk_priority", true, "目标选择",
                     () => "顾客需要的物品优先放桌面",

@@ -199,6 +199,7 @@ namespace SmartQuickTransfer.Core
                     target.Slot = slot;
                     target.Inventory = inventory;
                     target.FocusStamp = candidate.focusStamp;
+                    target.IntentStamp = WindowIntentTracker.CurrentStampOf(candidate);
                     target.OriginalOrder = order++;
                     target.TargetKey = StableIdentityResolver.ResolveTarget(candidate, inventory);
                     result.Add(target);

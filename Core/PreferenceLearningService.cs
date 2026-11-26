@@ -246,6 +246,60 @@ namespace SmartQuickTransfer.Core
             return info;
         }
 
+        /// <summary>
+        /// Record a genuine player drag as direct evidence that an item belongs in the destination.
+        /// This is the natural way players express intent ("put this in B"), unlike the older
+        /// correction path which required dragging back OUT of our predicted target. Only positive
+        /// evidence is added; no target is punished because there was no wrong prediction to negate.
+        /// Reuses the same persisted structure (positive evidence, event count, decay, half-life,
+        /// debounced save) so the on-disk data version is unchanged.
+        /// </summary>
+        internal static LearningUpdateInfo RecordDirectPreference(string itemKey, string actualTargetKey,
+            float weight)
+        {
+            LearningUpdateInfo info = new LearningUpdateInfo();
+            info.Success = false;
+            info.ItemKey = itemKey;
+            info.NewTarget = actualTargetKey;
+            info.FeedbackWeight = weight;
+            if (string.IsNullOrEmpty(itemKey) || string.IsNullOrEmpty(actualTargetKey) || weight <= 0f)
+            {
+                return info;
+            }
+            Initialize();
+
+            DateTime now = DateTime.UtcNow;
+            ItemPreference item = FindOrCreate(itemKey);
+
+            float eventsBefore = item.CorrectionEvents;
+            item.CorrectionEvents = Decay(item.CorrectionEvents, item.Targets.Count > 0 ? OldestUpdate(item) : now, now) + weight;
+            info.CorrectionEvents = item.CorrectionEvents;
+
+            TargetPreference tp = GetOrCreateTarget(item, actualTargetKey, now);
+            info.NewPositiveBefore = tp.PositiveEvidence;
+            info.NewNegativeBefore = tp.NegativeEvidence;
+            tp.PositiveEvidence = Decay(tp.PositiveEvidence, tp.LastUpdatedUtc, now) + weight;
+            tp.NegativeEvidence = Decay(tp.NegativeEvidence, tp.LastUpdatedUtc, now);
+            tp.LastUpdatedUtc = now;
+            info.NewPositiveAfter = tp.PositiveEvidence;
+            info.NewNegativeAfter = tp.NegativeEvidence;
+
+            info.Confidence = item.CorrectionEvents / (item.CorrectionEvents + ConfidenceDenominator);
+            info.LearningWeight = MaxLearningWeight * info.Confidence;
+
+            Prune();
+            Dirty = true;
+            PendingUpdates++;
+            LastChangeUtc = now;
+            info.Success = true;
+
+            if (PendingUpdates >= ThresholdUpdates)
+            {
+                SaveNow("threshold");
+            }
+            return info;
+        }
+
         internal sealed class LearningUpdateInfo
         {
             internal bool Success;

@@ -51,6 +51,10 @@ namespace SmartQuickTransfer.Patches
                     return false;
                 }
 
+                // Freeze window intent before any transfer/animation can shift focus. Every
+                // candidate scored for this double-click reads from this single immutable snapshot.
+                WindowIntentTracker.TakeSnapshot();
+
                 TransferSettings settings = ModEntry.Settings;
                 if (settings != null && !settings.Enabled)
                 {

@@ -6,20 +6,23 @@ namespace SmartQuickTransfer.Core
 {
     /// <summary>
     /// Fixed scoring model (all weights are code constants, no user configuration):
-    ///   Recency  R = 100 * 0.7^rank          (rank over valid candidates by native focusStamp)
-    ///   Affinity A = ItemDestinationAffinityRules (0-100)
-    ///   Base     B = 0.70*R + 0.30*A
+    ///   Intent   R = 100 * 0.7^rank          (rank by the player's most recent explicit intent)
+    ///   Affinity A = ItemDestinationAffinityRules (0-100), a secondary tie-breaker only
+    ///   Base     B = 0.85*R + 0.15*A
     ///   Utility  U = 100*(P+1)/(P+N+2)       (Bayesian-smoothed learned preference)
     ///   Weight   L = 0.60 * E/(E+3)          (dynamic trust in the learned model)
     ///   Final    F = (1-L)*B + L*U
     ///
-    /// Untrained items get L=0 and are driven purely by the base score. Sorting is deterministic
-    /// for equal focusStamp via the candidate's original collection order.
+    /// Ranking is driven by the frozen WindowIntentTracker snapshot, not the game's focusStamp,
+    /// which is refreshed by unrelated clicks. A candidate never touched by the player falls back
+    /// to its native focusStamp so an untouched but sensible window can still be chosen when no
+    /// explicit intent exists. Affinity is deliberately down-weighted: the player's last chosen
+    /// container wins unless it cannot hold the item. Untrained items get L=0.
     /// </summary>
     internal static class TargetScoringService
     {
-        internal const float RecencyWeight = 0.70f;
-        internal const float AffinityWeight = 0.30f;
+        internal const float RecencyWeight = 0.85f;
+        internal const float AffinityWeight = 0.15f;
         internal const float RecencyDecay = 0.7f;
 
         /// <summary>
@@ -36,8 +39,9 @@ namespace SmartQuickTransfer.Core
             Stopwatch sw = Stopwatch.StartNew();
             List<TargetCandidate> result = candidates ?? new List<TargetCandidate>();
 
-            // 1) Deterministic ordering by native focusStamp (descending), tie-broken by original
-            //    collection order. Ranking is only over already-valid, slot-compatible candidates.
+            // 1) Deterministic ordering by player intent (descending): explicitly touched windows
+            //    rank above untouched ones; untouched windows fall back to native focusStamp.
+            //    Tie-broken by original collection order. Only valid, slot-compatible candidates rank.
             result.Sort(CompareByRecency);
 
             string itemKey = StableIdentityResolver.ResolveItem(item);
@@ -53,8 +57,9 @@ namespace SmartQuickTransfer.Core
                 c.LearnedScore = PreferenceLearningService.GetPreference(itemKey, c.TargetKey);
                 c.FinalScore = (1f - itemLearningWeight) * baseScore + itemLearningWeight * c.LearnedScore;
 
-                TransferDiagnostics.CandidateScored(traceId, c.TargetKey, c.RecencyScore, c.AffinityScore,
-                    c.LearnedScore, baseScore, itemLearningWeight, c.FinalScore, rank);
+                TransferDiagnostics.CandidateScored(traceId, c.TargetKey, rank, c.IntentStamp,
+                    c.RecencyScore, c.AffinityScore, c.LearnedScore, baseScore,
+                    itemLearningWeight, c.FinalScore);
             }
 
             // Detect ties on the top final score before the deterministic tie-break.
@@ -84,9 +89,27 @@ namespace SmartQuickTransfer.Core
 
         private static int CompareByRecency(TargetCandidate a, TargetCandidate b)
         {
-            if (a.FocusStamp != b.FocusStamp)
+            return CompareIntent(a, b);
+        }
+
+        /// <summary>
+        /// A touched window always outranks an untouched one. Among touched windows, the higher
+        /// intent stamp wins; among untouched windows, the native focusStamp is the fallback key.
+        /// Final tie-break is the stable collection order.
+        /// </summary>
+        private static int CompareIntent(TargetCandidate a, TargetCandidate b)
+        {
+            bool aTouched = a.IntentStamp > 0L;
+            bool bTouched = b.IntentStamp > 0L;
+            if (aTouched != bTouched)
             {
-                return a.FocusStamp > b.FocusStamp ? -1 : 1;
+                return aTouched ? -1 : 1;
+            }
+            long aKey = aTouched ? a.IntentStamp : a.FocusStamp;
+            long bKey = bTouched ? b.IntentStamp : b.FocusStamp;
+            if (aKey != bKey)
+            {
+                return aKey > bKey ? -1 : 1;
             }
             return a.OriginalOrder.CompareTo(b.OriginalOrder);
         }
@@ -97,11 +120,7 @@ namespace SmartQuickTransfer.Core
             {
                 return a.FinalScore > b.FinalScore ? -1 : 1;
             }
-            if (a.FocusStamp != b.FocusStamp)
-            {
-                return a.FocusStamp > b.FocusStamp ? -1 : 1;
-            }
-            return a.OriginalOrder.CompareTo(b.OriginalOrder);
+            return CompareIntent(a, b);
         }
     }
 }

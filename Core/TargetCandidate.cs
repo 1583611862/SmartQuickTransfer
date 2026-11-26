@@ -14,6 +14,8 @@ namespace SmartQuickTransfer.Core
         internal GameInventory Inventory;
 
         internal long FocusStamp;
+        /// <summary>Player-intent stamp from the double-click's frozen snapshot (0 = never touched).</summary>
+        internal long IntentStamp;
         internal int OriginalOrder;
 
         /// <summary>Stable identity of the destination (machine:&lt;id&gt;, storage:&lt;area&gt;, ...).</summary>

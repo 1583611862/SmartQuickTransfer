@@ -49,6 +49,7 @@ namespace SmartQuickTransfer.Core
             internal const string CorrectionMatchedCount = "correction_matched_count";
             internal const string CorrectionRejectedCount = "correction_rejected_count";
             internal const string LearningUpdateCount = "learning_update_count";
+            internal const string DirectPreferenceCount = "direct_preference_count";
             internal const string PredictionExpiredCount = "prediction_expired_count";
             internal const string PredictionClearedCount = "prediction_cleared_count";
             internal const string PersistenceSuccessCount = "persistence_success_count";
@@ -61,6 +62,7 @@ namespace SmartQuickTransfer.Core
             Stat.SuccessfulTransfers, Stat.FailedTransfers, Stat.PartialTransfers,
             Stat.CandidateScanCount, Stat.CandidateRejectedCount, Stat.ManualDragCount,
             Stat.CorrectionMatchedCount, Stat.CorrectionRejectedCount, Stat.LearningUpdateCount,
+            Stat.DirectPreferenceCount,
             Stat.PredictionExpiredCount, Stat.PredictionClearedCount,
             Stat.PersistenceSuccessCount, Stat.PersistenceFailureCount
         };
@@ -283,8 +285,9 @@ namespace SmartQuickTransfer.Core
             catch (Exception) { }
         }
 
-        internal static void CandidateScored(string traceId, string target, float recency, float affinity,
-            float learned, float baseScore, float learningWeight, float finalScore, int rank)
+        internal static void CandidateScored(string traceId, string target, int rank, long intentStamp,
+            float recency, float affinity,
+            float learned, float baseScore, float learningWeight, float finalScore)
         {
             if (!DetailedEnabled)
             {
@@ -296,6 +299,7 @@ namespace SmartQuickTransfer.Core
                     "trace_id=" + Str(traceId),
                     "target=" + Str(target),
                     "rank=" + rank.ToString(CultureInfo.InvariantCulture),
+                    "intent_stamp=" + intentStamp.ToString(CultureInfo.InvariantCulture),
                     "recency_score=" + Num(recency),
                     "affinity_score=" + Num(affinity),
                     "learned_score=" + Num(learned),
@@ -513,6 +517,27 @@ namespace SmartQuickTransfer.Core
                     "learning_weight=" + Num(learningWeight),
                     "feedback_weight=" + Num(feedbackWeight),
                     "updated=" + (success ? "true" : "false"));
+            }
+            catch (Exception) { }
+        }
+
+        internal static void DirectPreference(string itemKey, string target, bool success, float learningWeight)
+        {
+            if (!DetailedEnabled)
+            {
+                return;
+            }
+            try
+            {
+                if (success)
+                {
+                    Increment(Stat.DirectPreferenceCount);
+                }
+                Event("LEARNING", "direct_preference",
+                    "item=" + Str(itemKey),
+                    "target=" + Str(target),
+                    "success=" + (success ? "true" : "false"),
+                    "learning_weight=" + Num(learningWeight));
             }
             catch (Exception) { }
         }

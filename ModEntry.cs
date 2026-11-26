@@ -35,6 +35,7 @@ namespace SmartQuickTransfer
         public void OnEnable()
         {
             LogInfo("enabled.");
+            WindowIntentTracker.Reset();
             TransferDiagnostics.BeginSession();
             LogConfigurationSafe();
             try
@@ -64,6 +65,7 @@ namespace SmartQuickTransfer
                 // CLASS A: clear temporary predictions. CLASS B: save dirty preferences first.
                 PreferenceLearningService.Shutdown("mod_disable");
                 PredictionLedger.ClearPendingPredictions("mod_disable");
+                WindowIntentTracker.Reset();
                 TransferDiagnostics.ModUnloading(true, true, false);
                 TransferDiagnostics.Flush(
                     PredictionLedger.Count,

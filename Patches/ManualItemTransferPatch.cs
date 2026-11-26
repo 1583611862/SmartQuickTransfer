@@ -33,6 +33,18 @@ namespace SmartQuickTransfer.Patches
                 if (ev != null)
                 {
                     CorrectionMatcher.Evaluate(ev);
+                    if (!ev.WasMatched)
+                    {
+                        // A genuine cross-inventory drag that is not a correction is still the
+                        // clearest statement of player intent: "this item goes in B". Feed a direct
+                        // positive preference for the chosen destination. When it WAS a correction,
+                        // ApplyCorrection already recorded the positive evidence, so skip here.
+                        PreferenceLearningService.LearningUpdateInfo direct =
+                            PreferenceLearningService.RecordDirectPreference(
+                                ev.ItemKey, ev.DestinationKey, 1f);
+                        TransferDiagnostics.DirectPreference(
+                            ev.ItemIdentifier, ev.DestinationKey, direct.Success, direct.LearningWeight);
+                    }
                     TransferDiagnostics.ManualDrag(
                         ev.ItemIdentifier,
                         ev.SourceKey,
