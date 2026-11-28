@@ -27,10 +27,10 @@ namespace SmartQuickTransfer.Core
 
             try
             {
-                EmporiumEntry entry = EmporiumEntry.Instance;
-                bool fromGround = entry != null
-                    && ReferenceEquals(sourceWindow, entry.afterhourWindow)
-                    && ReferenceEquals(item.parentInventory, entry.afterhourInventory);
+                // Decide by item location, not by whichever window happens to be focused.
+                // Ground loot must never fall through to normal scoring, which can pick the
+                // warehouse: on the dumping ground it may only go into the backpack or hands.
+                bool fromGround = DesktopTransfer.IsOnNightGround(item);
                 if (fromGround)
                 {
                     Branch(traceId, "night_ground");
@@ -132,20 +132,18 @@ namespace SmartQuickTransfer.Core
             PixelWindow destinationWindow = null;
             string predictedKey = null;
 
-            bool fromGround = entry != null
-                && ReferenceEquals(sourceWindow, entry.afterhourWindow)
-                && ReferenceEquals(representative.parentInventory, entry.afterhourInventory);
+            bool fromGround = DesktopTransfer.IsOnNightGround(representative);
 
             if (fromGround)
             {
                 // One shared destination for the whole batch: the visible backpack grid first,
-                // then the hands (except for openable items), then the main inventory.
+                // then the hands (except for openable items). Never the warehouse - ground loot
+                // must stay on the ground when neither the backpack nor the hands can take it.
                 bool openable = representative.contentWindow != null
                     && !MachineSlotResolver.IsMachineItem(representative);
                 destination = DesktopTransfer.ResolveAfterhourBackpack(representative)
-                    ?? (openable ? (GameInventory)null : DesktopTransfer.ResolveAfterhourPocket(representative))
-                    ?? DesktopTransfer.ResolveAfterhourStorage(representative);
-                destinationWindow = entry.afterhourWindow;
+                    ?? (openable ? (GameInventory)null : DesktopTransfer.ResolveAfterhourPocket(representative));
+                destinationWindow = entry != null ? entry.afterhourWindow : null;
             }
             else if (DesktopTransfer.IsShowcaseSpecial(representative)
                 && DesktopTransfer.IsFromDossier(representative, sourceWindow))
@@ -431,13 +429,10 @@ namespace SmartQuickTransfer.Core
             }
             if (pocket == null)
             {
-                // No backpack equipped (or both hands occupied and no backpack): use the main
-                // inventory instead of doing nothing.
-                pocket = DesktopTransfer.ResolveAfterhourStorage(item);
-            }
-            if (pocket == null)
-            {
-                ModEntry.LogInfo("afterhour backpack and pockets cannot accept " + DescribeItem(item) + "; item kept in place.");
+                // No backpack that can take it and no free hands: leave it on the ground.
+                // The warehouse is never a destination for night-ground loot.
+                ModEntry.LogInfo("afterhour backpack and pockets cannot accept " + DescribeItem(item)
+                    + "; item kept on the ground (never returned to the warehouse).");
                 return TransferOutcome.RejectedByTarget;
             }
 
