@@ -1,6 +1,7 @@
 using System;
 using HarmonyLib;
 using SmartQuickTransfer.Core;
+using UnityEngine;
 
 namespace SmartQuickTransfer.Patches
 {
@@ -17,35 +18,49 @@ namespace SmartQuickTransfer.Patches
     ///
     /// These are read-only postfixes: they never alter game state or the original call flow.
     /// </summary>
-    [HarmonyPatch(typeof(PixelWindow), "ToFront")]
-    internal static class WindowFocusPatch_ToFront
+    internal static class WindowFocusIntent
     {
-        private static void Postfix(PixelWindow __instance)
+        internal static void Touch(PixelWindow window, string origin)
         {
             try
             {
-                WindowIntentTracker.Touch(__instance);
+                WindowIntentTracker.Touch(window);
             }
             catch (Exception e)
             {
-                ModEntry.LogError("ToFront intent patch failed: " + e.Message);
+                ModEntry.LogError(origin + " intent patch failed: " + e.Message);
             }
         }
     }
 
-    [HarmonyPatch(typeof(PixelWindow), "Show")]
+    [HarmonyPatch(typeof(PixelWindow), "ToFront", typeof(bool))]
+    internal static class WindowFocusPatch_ToFront
+    {
+        private static void Postfix(PixelWindow __instance)
+        {
+            WindowFocusIntent.Touch(__instance, "ToFront");
+        }
+    }
+
+    // PixelWindow.Show has multiple overloads. Binding by name alone makes Harmony throw
+    // AmbiguousMatchException and aborts every patch in the mod, so bind exact signatures.
+    // The no-argument and the fully-specified overloads are the two independent
+    // implementations; Show(Vector2, bool) forwards to the latter, so these two cover all opens.
+    [HarmonyPatch(typeof(PixelWindow), "Show", new Type[0])]
     internal static class WindowFocusPatch_Show
     {
         private static void Postfix(PixelWindow __instance)
         {
-            try
-            {
-                WindowIntentTracker.Touch(__instance);
-            }
-            catch (Exception e)
-            {
-                ModEntry.LogError("Show intent patch failed: " + e.Message);
-            }
+            WindowFocusIntent.Touch(__instance, "Show");
+        }
+    }
+
+    [HarmonyPatch(typeof(PixelWindow), "Show", typeof(Vector2), typeof(Vector2), typeof(bool))]
+    internal static class WindowFocusPatch_ShowWithPosition
+    {
+        private static void Postfix(PixelWindow __instance)
+        {
+            WindowFocusIntent.Touch(__instance, "ShowWithPosition");
         }
     }
 }
