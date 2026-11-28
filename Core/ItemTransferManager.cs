@@ -39,7 +39,8 @@ namespace SmartQuickTransfer.Core
                     // other loot - into the visible backpack grid, never into the hands.
                     bool openable = item.contentWindow != null && !MachineSlotResolver.IsMachineItem(item);
                     TransferOutcome outcome = TransferToAfterhourPocket(item, sourceWindow, capture, !openable);
-                    ReportSpecial(traceId, "night_ground", item, DescribeFinalArea(item), outcome);
+                    ReportSpecial(traceId, "night_ground", item, DescribeFinalArea(item), outcome,
+                        outcome == TransferOutcome.RejectedByTarget || outcome == TransferOutcome.Failed ? 0 : item.unitCount);
                     return outcome;
                 }
 
@@ -52,7 +53,8 @@ namespace SmartQuickTransfer.Core
                     {
                         Branch(traceId, "showcase_special");
                         TransferOutcome outcome = TransferToShowcase(item, sourceWindow, showcase, capture);
-                        ReportSpecial(traceId, "showcase_special", item, DescribeFinalArea(item), outcome);
+                        ReportSpecial(traceId, "showcase_special", item, DescribeFinalArea(item), outcome,
+                            outcome == TransferOutcome.Failed ? 0 : item.unitCount);
                         return outcome;
                     }
                 }
@@ -66,16 +68,18 @@ namespace SmartQuickTransfer.Core
                     {
                         Branch(traceId, "customer_demand");
                         TransferOutcome outcome = TransferToCustomerDesk(item, sourceWindow, desk, capture);
-                        ReportSpecial(traceId, "customer_demand", item, DesktopTransfer.DescribeArea(desk), outcome);
+                        ReportSpecial(traceId, "customer_demand", item, DesktopTransfer.DescribeArea(desk), outcome,
+                            outcome == TransferOutcome.Failed ? 0 : item.unitCount);
                         return outcome;
                     }
                     ModEntry.LogInfo("customer wants " + DescribeItem(item)
                         + " but the desk has no valid slot; using the normal route.");
                 }
 
-                // Anything taken out of a machine or tool goes back to storage, never to the window
-                // that happens to have been focused last. Fixed machinery panels (night ground,
-                // vending slots) are storage areas rather than machines and keep the normal routing.
+                // A machinery-style window is either a real processing machine or a storage
+                // container (smuggler bays, storage bays, toolboxes ... all use Machinery style).
+                // Fixed machinery panels (night ground, vending slots) are storage areas, not
+                // machines, and keep the normal routing.
                 bool fromMachine = MachineSlotResolver.IsMachineryWindow(sourceWindow)
                     && !WindowActivityManager.IsStorePanel(sourceWindow);
 
@@ -87,16 +91,38 @@ namespace SmartQuickTransfer.Core
                     {
                         return scored;
                     }
-                }
-                else
-                {
-                    Branch(traceId, "machine_return");
+                    Branch(traceId, "normal_fallback");
+                    TransferOutcome fallbackOutcome = TransferToFallback(item, sourceWindow, capture, false, traceId);
+                    ReportSpecial(traceId, "fallback", item, DescribeFinalArea(item), fallbackOutcome,
+                        fallbackOutcome == TransferOutcome.MovedToFallback ? item.unitCount : 0);
+                    return fallbackOutcome;
                 }
 
-                TransferOutcome fallbackOutcome = TransferToFallback(item, sourceWindow, capture, fromMachine);
-                ReportSpecial(traceId, fromMachine ? "machine_return" : "fallback", item,
-                    DescribeFinalArea(item), fallbackOutcome);
-                return fallbackOutcome;
+                // Machine source: only a player-intended, non-fixed-panel, slot-compatible target
+                // may receive the item. Such a target is a container by construction: processing
+                // machines are excluded by IsProcessingMachineWindow. With no such target we keep
+                // the original machine-return behaviour (MachineOutputArea).
+                List<TargetCandidate> intended = CollectMachineIntendedTargets(item, sourceWindow, traceId);
+                int intendedCount = intended == null ? 0 : intended.Count;
+                bool usedScored = false;
+                if (intendedCount > 0)
+                {
+                    Branch(traceId, "machine_scored");
+                    TransferOutcome scored = TryMachineTargets(item, sourceWindow, intended, capture, traceId);
+                    if (scored != TransferOutcome.NotHandled)
+                    {
+                        usedScored = true;
+                        LogMachineDecision(traceId, item, sourceWindow, intendedCount, true);
+                        return scored;
+                    }
+                }
+                LogMachineDecision(traceId, item, sourceWindow, intendedCount, usedScored);
+
+                Branch(traceId, "machine_return");
+                TransferOutcome machineFallback = TransferToFallback(item, sourceWindow, capture, true, traceId);
+                ReportSpecial(traceId, "machine_return", item, DescribeFinalArea(item), machineFallback,
+                    machineFallback == TransferOutcome.MovedToFallback ? item.unitCount : 0);
+                return machineFallback;
             }
             catch (Exception e)
             {
@@ -167,10 +193,13 @@ namespace SmartQuickTransfer.Core
                 bool fromMachine = MachineSlotResolver.IsMachineryWindow(sourceWindow)
                     && !WindowActivityManager.IsStorePanel(sourceWindow);
 
-                if (destination == null && !fromMachine)
+                if (destination == null)
                 {
-                    List<TargetCandidate> candidates =
-                        WindowActivityManager.GetEligibleTargets(representative, sourceWindow, traceId);
+                    // Same decision as the single-item path: normal sources use every eligible
+                    // candidate; machine sources only use player-intended container targets.
+                    List<TargetCandidate> candidates = fromMachine
+                        ? CollectMachineIntendedTargets(representative, sourceWindow, traceId)
+                        : WindowActivityManager.GetEligibleTargets(representative, sourceWindow, traceId);
                     if (candidates != null && candidates.Count > 0)
                     {
                         List<TargetCandidate> ranked =
@@ -190,6 +219,7 @@ namespace SmartQuickTransfer.Core
                     if (destination != null)
                     {
                         destinationWindow = GraphUtils.FindParentType<PixelWindow>(destination);
+                        predictedKey = StableIdentityResolver.ResolveTarget(destinationWindow, destination);
                     }
                 }
             }
@@ -267,6 +297,110 @@ namespace SmartQuickTransfer.Core
                 totalMoved > 0 && totalMoved < totalRequested, totalMoved <= 0,
                 totalMoved > 0 ? DesktopTransfer.DescribeArea(destination) : "unknown", "unavailable");
             return totalMoved;
+        }
+
+        /// <summary>
+        /// Machine-source target filter. A machine/tool item may be smart-transferred to another
+        /// container only when that container was explicitly touched by the player this session
+        /// (intent stamp from the frozen snapshot), is visible and slot-compatible, is neither a
+        /// fixed shop panel nor another window instance of the source inventory, and is not a
+        /// processing machine. With no such target the caller keeps the original machine-return
+        /// behaviour. Slot checks are the native read-only lookup and have no side effects.
+        /// </summary>
+        private static List<TargetCandidate> CollectMachineIntendedTargets(GameItem item,
+            PixelWindow sourceWindow, string traceId)
+        {
+            List<TargetCandidate> all = WindowActivityManager.GetEligibleTargets(item, sourceWindow, traceId);
+            List<TargetCandidate> result = new List<TargetCandidate>();
+            if (all == null || all.Count == 0 || item == null)
+            {
+                return result;
+            }
+
+            GameInventory sourceInventory = item.parentInventory;
+            for (int i = 0; i < all.Count; i++)
+            {
+                TargetCandidate c = all[i];
+                if (c == null || c.Window == null || c.Inventory == null)
+                {
+                    continue;
+                }
+                if (WindowActivityManager.IsStorePanel(c.Window))
+                {
+                    TransferDiagnostics.CandidateRejected(traceId, c.TargetKey, "machine_fixed_panel");
+                    continue;
+                }
+                if (sourceInventory != null && ReferenceEquals(c.Inventory, sourceInventory))
+                {
+                    TransferDiagnostics.CandidateRejected(traceId, c.TargetKey, "machine_source_inventory");
+                    continue;
+                }
+                if (MachineSlotResolver.IsProcessingMachineWindow(c.Window))
+                {
+                    TransferDiagnostics.CandidateRejected(traceId, c.TargetKey, "machine_processing_target");
+                    continue;
+                }
+                if (c.IntentStamp <= 0L)
+                {
+                    // Only a window the player actively opened/focused/dropped into qualifies.
+                    // The stamp comes from the snapshot frozen at double-click start, so the press
+                    // on the source window cannot turn itself into a target intent.
+                    TransferDiagnostics.CandidateRejected(traceId, c.TargetKey, "machine_no_intent");
+                    continue;
+                }
+                result.Add(c);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Ranks player-intended machine targets with the shared scorer and moves into them in
+        /// order, reusing the exact same attempt/prediction logic as the normal scored path.
+        /// </summary>
+        private static TransferOutcome TryMachineTargets(GameItem item, PixelWindow sourceWindow,
+            List<TargetCandidate> intended, FlightCapture capture, string traceId)
+        {
+            List<TargetCandidate> ranked = TargetScoringService.ScoreAndRank(item, intended, traceId);
+            for (int i = 0; i < ranked.Count; i++)
+            {
+                TargetCandidate candidate = ranked[i];
+                TransferAttemptResult attempt = TryMoveInto(item, sourceWindow, candidate, capture);
+                TransferDiagnostics.TransferResult(
+                    traceId, candidate.TargetKey, candidate.TargetKey,
+                    attempt.RequestedCount, attempt.MovedCount, outcomeName(attempt.Outcome),
+                    attempt.IsPartial, attempt.Outcome == AttemptOutcome.NothingMoved,
+                    attempt.MovedCount > 0 ? DescribeFinalArea(item) : "unknown", attempt.DurationMs);
+
+                if (attempt.Outcome == AttemptOutcome.NothingMoved)
+                {
+                    ModEntry.LogInfo("machine target '" + candidate.Description
+                        + "' accepted no units; trying the next candidate.");
+                    continue;
+                }
+
+                GameInventory destination = candidate.Inventory;
+                if (destination != null)
+                {
+                    GameInventory originalSource = capture != null ? capture.SourceInventory : null;
+                    PredictionLedger.Record(
+                        traceId,
+                        StableIdentityResolver.ResolveItem(item),
+                        item,
+                        originalSource,
+                        destination,
+                        StableIdentityResolver.ResolveInventoryOnly(originalSource),
+                        candidate.TargetKey,
+                        attempt.RequestedCount,
+                        attempt.MovedCount);
+                }
+
+                ModEntry.LogInfo((attempt.IsPartial ? "partially moved " : "moved ") + attempt.MovedCount
+                    + " x " + DescribeItem(item) + " from '" + WindowActivityManager.Describe(sourceWindow)
+                    + "' into player-selected container '" + candidate.Description + "' (score="
+                    + candidate.FinalScore.ToString("0.0") + "); item now in " + DescribeFinalArea(item) + ".");
+                return TransferOutcome.MovedToWindow;
+            }
+            return TransferOutcome.NotHandled;
         }
 
         /// <summary>
@@ -391,18 +525,37 @@ namespace SmartQuickTransfer.Core
             TransferDiagnostics.Branch(traceId, branch);
         }
 
-        private static void ReportSpecial(string traceId, string branch, GameItem item,
-            string finalArea, TransferOutcome outcome)
+        private static void LogMachineDecision(string traceId, GameItem item, PixelWindow sourceWindow,
+            int intendedCount, bool usedScoredTarget)
         {
+            string sourceKey = StableIdentityResolver.ResolveInventoryOnly(
+                item == null ? null : item.parentInventory);
+            long stamp = sourceWindow == null ? 0L : WindowIntentTracker.CurrentStampOf(sourceWindow);
+            TransferDiagnostics.MachineDecision(traceId, WindowActivityManager.Describe(sourceWindow),
+                sourceKey, stamp, intendedCount, usedScoredTarget);
+        }
+
+        /// <summary>
+        /// Reports a special branch with the REAL moved count instead of the old hard-coded zero.
+        /// A special route can move the item into warehouse/showcase/desk/ground just like a scored
+        /// route; reporting zero produced misleading "moved=0 but item now in 仓库" traces.
+        /// </summary>
+        private static void ReportSpecial(string traceId, string branch, GameItem item,
+            string finalArea, TransferOutcome outcome, int moved)
+        {
+            bool noMove = outcome == TransferOutcome.Failed
+                || outcome == TransferOutcome.RejectedByTarget
+                || outcome == TransferOutcome.NotHandled;
+            int requested = item == null ? 0 : item.unitCount;
             TransferDiagnostics.TransferResult(
                 traceId,
-                "n/a_special_branch",
-                "n/a_special_branch",
-                item == null ? 0 : item.unitCount,
-                0,
+                branch,
+                branch,
+                requested,
+                noMove ? 0 : moved,
                 outcome.ToString(),
-                false,
-                false,
+                !noMove && moved < requested,
+                noMove,
                 finalArea,
                 "unavailable");
         }
@@ -494,7 +647,13 @@ namespace SmartQuickTransfer.Core
             return TransferOutcome.MovedToWindow;
         }
 
-        private static TransferOutcome TransferToFallback(GameItem item, PixelWindow sourceWindow, FlightCapture capture, bool fromMachine)
+        /// <summary>
+        /// Final fallback into the fixed storage panels. Every successful automatic move registers
+        /// a real prediction so a later manual drag can be matched as a correction - including the
+        /// machine-return route, which previously produced no prediction at all.
+        /// </summary>
+        private static TransferOutcome TransferToFallback(GameItem item, PixelWindow sourceWindow,
+            FlightCapture capture, bool fromMachine, string traceId)
         {
             GameInventory destination = DesktopTransfer.Resolve(item, sourceWindow, fromMachine);
             if (destination == null)
@@ -505,6 +664,7 @@ namespace SmartQuickTransfer.Core
 
             SlotMarker slot = FindSlot(destination, item);
             int requested = item.unitCount;
+            GameInventory originalSource = capture != null ? capture.SourceInventory : item.parentInventory;
             int moved = GuardedMove(destination, item, sourceWindow);
             if (moved <= 0)
             {
@@ -513,6 +673,21 @@ namespace SmartQuickTransfer.Core
             }
 
             TransferAnimation.Play(capture, item, slot, ShouldHideSource(capture, item, moved, requested));
+
+            string actualKey = StableIdentityResolver.ResolveInventoryOnly(destination);
+            if (!string.IsNullOrEmpty(traceId))
+            {
+                PredictionLedger.Record(
+                    traceId,
+                    StableIdentityResolver.ResolveItem(item),
+                    item,
+                    originalSource,
+                    destination,
+                    StableIdentityResolver.ResolveInventoryOnly(originalSource),
+                    actualKey,
+                    requested,
+                    moved);
+            }
 
             ModEntry.LogInfo((fromMachine ? "taken out of a machine" : "no target window open")
                 + "; moved " + moved + " x " + DescribeItem(item) + " from '"

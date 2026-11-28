@@ -80,6 +80,51 @@ namespace SmartQuickTransfer.Transfer
             return IsMachineryWindow(item.contentWindow);
         }
 
+        /// <summary>
+        /// True when the window belongs to a processing machine (furnace, blender, purifier, ...).
+        /// This is the native counterpart of a storage container: processing machines carry the
+        /// game's MACHINE item type and/or the standard machine tags, while storage containers
+        /// (smuggler bays, storage bays, toolboxes, boxes of every form) carry STORAGE/CONTAINER
+        /// types instead. Used to keep machine-sourced smart transfers between containers and
+        /// away from processing machines. Relies only on native type/tag data - never on a window
+        /// title, display name or a hard-coded item identifier.
+        /// </summary>
+        internal static bool IsProcessingMachineWindow(PixelWindow window)
+        {
+            if (window == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (window.parentItems == null || window.parentItems.Count == 0)
+                {
+                    return false;
+                }
+                GameItem owner = window.parentItems[0];
+                if (owner == null)
+                {
+                    return false;
+                }
+                if (owner.IsGameItemType("MACHINE"))
+                {
+                    return true;
+                }
+                if (owner.IsTag(MachineHelper.STANDARD_MACHINE_TAG)
+                    || owner.IsTag(MachineHelper.MACHINE_RECHARGABLE_TAG))
+                {
+                    return true;
+                }
+            }
+            catch (Exception)
+            {
+                // An owner may be mid-destruction; conservative false keeps normal routing.
+            }
+
+            return false;
+        }
+
         internal static string Describe(PixelWindow window)
         {
             if (window == null)

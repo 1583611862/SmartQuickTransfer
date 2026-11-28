@@ -39,6 +39,9 @@ namespace SmartQuickTransfer.Core
         {
             internal const string TotalDoubleClicks = "total_double_clicks";
             internal const string NormalTransfers = "normal_transfers";
+            internal const string MachineScoredTransfers = "machine_scored_transfers";
+            internal const string MachineReturnFallbacks = "machine_return_fallbacks";
+            internal const string NormalFallbacks = "normal_fallbacks";
             internal const string SpecialBranchTransfers = "special_branch_transfers";
             internal const string SuccessfulTransfers = "successful_transfers";
             internal const string FailedTransfers = "failed_transfers";
@@ -58,7 +61,8 @@ namespace SmartQuickTransfer.Core
 
         private static readonly string[] StatOrder =
         {
-            Stat.TotalDoubleClicks, Stat.NormalTransfers, Stat.SpecialBranchTransfers,
+            Stat.TotalDoubleClicks, Stat.NormalTransfers, Stat.MachineScoredTransfers,
+            Stat.MachineReturnFallbacks, Stat.NormalFallbacks, Stat.SpecialBranchTransfers,
             Stat.SuccessfulTransfers, Stat.FailedTransfers, Stat.PartialTransfers,
             Stat.CandidateScanCount, Stat.CandidateRejectedCount, Stat.ManualDragCount,
             Stat.CorrectionMatchedCount, Stat.CorrectionRejectedCount, Stat.LearningUpdateCount,
@@ -240,6 +244,18 @@ namespace SmartQuickTransfer.Core
                 {
                     Increment(Stat.NormalTransfers);
                 }
+                else if (branch == "machine_scored")
+                {
+                    Increment(Stat.MachineScoredTransfers);
+                }
+                else if (branch == "machine_return")
+                {
+                    Increment(Stat.MachineReturnFallbacks);
+                }
+                else if (branch == "normal_fallback")
+                {
+                    Increment(Stat.NormalFallbacks);
+                }
                 else
                 {
                     Increment(Stat.SpecialBranchTransfers);
@@ -281,6 +297,30 @@ namespace SmartQuickTransfer.Core
                     "trace_id=" + Str(traceId),
                     "window=" + Str(window),
                     "reason=" + Str(reason));
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>
+        /// Machine-source decision summary: one line per double-click so a trace shows whether the
+        /// smart container route was taken and why, without re-running any side-effectful check.
+        /// </summary>
+        internal static void MachineDecision(string traceId, string sourceWindow, string sourceInventory,
+            long sourceIntentStamp, int intendedCount, bool usedScoredTarget)
+        {
+            if (!DetailedEnabled)
+            {
+                return;
+            }
+            try
+            {
+                Event("TRACE", "machine_decision",
+                    "trace_id=" + Str(traceId),
+                    "source_window=" + Str(sourceWindow),
+                    "source_inventory=" + Str(sourceInventory),
+                    "source_intent_stamp=" + sourceIntentStamp.ToString(CultureInfo.InvariantCulture),
+                    "intended_candidates=" + intendedCount.ToString(CultureInfo.InvariantCulture),
+                    "used_scored_target=" + (usedScoredTarget ? "true" : "false"));
             }
             catch (Exception) { }
         }

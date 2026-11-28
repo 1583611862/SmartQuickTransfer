@@ -63,12 +63,32 @@ namespace SmartQuickTransfer.Core
         /// </summary>
         internal static string ResolveTarget(PixelWindow window, GameInventory inventory)
         {
+            // Canonical target identity is derived from the inventory itself, never from the
+            // window object. This is the SAME resolution the manual-drag observer uses, so an
+            // automatic transfer, its prediction, the player's correction and the persisted
+            // preference all agree on one key for one physical destination. Older builds derived
+            // machine/container keys from the window owner (e.g. "machine:smuggler_bay_mod")
+            // while the drag path used "storage:smuggler_bay"; that split made learned
+            // preferences unreadable by the scorer. PreferenceLearningService keeps alias reads
+            // for those historical keys, so existing data is preserved.
+            if (inventory == null)
+            {
+                return ResolveInventoryOnly(null);
+            }
+            return ResolveInventoryOnly(inventory);
+        }
+
+        /// <summary>
+        /// Legacy window-owner based key, kept only so compatibility readers can translate old
+        /// persisted keys. New code must not use this for scoring or prediction writes.
+        /// </summary>
+        internal static string ResolveLegacyWindowTarget(PixelWindow window, GameInventory inventory)
+        {
             if (window == null)
             {
                 return ResolveInventoryOnly(inventory);
             }
 
-            // The fixed shop panels have a stable area key independent of the window object.
             string area = WindowActivityManager.DescribeShopArea(window);
             if (area != null)
             {
@@ -97,7 +117,6 @@ namespace SmartQuickTransfer.Core
                 return PrefixContainer + owner.identifier;
             }
 
-            // Fall back to the inventory identifier when the window owner cannot be read.
             return ResolveInventoryOnly(inventory);
         }
 

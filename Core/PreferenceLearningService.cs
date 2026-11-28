@@ -374,8 +374,9 @@ namespace SmartQuickTransfer.Core
             {
                 return 50f;
             }
-            TargetPreference tp;
-            if (!item.Targets.TryGetValue(targetKey, out tp))
+
+            TargetPreference tp = FindPreferenceWithAliases(item, targetKey);
+            if (tp == null)
             {
                 return 50f;
             }
@@ -383,6 +384,54 @@ namespace SmartQuickTransfer.Core
             float p = Decay(tp.PositiveEvidence, tp.LastUpdatedUtc, now);
             float n = Decay(tp.NegativeEvidence, tp.LastUpdatedUtc, now);
             return 100f * (p + 1f) / (p + n + 2f);
+        }
+
+        /// <summary>
+        /// Resolve a stored preference by exact key first, then by equivalent legacy aliases.
+        /// Older releases keyed machine/container destinations from the window owner while the
+        /// manual-drag path used the inventory key; the same physical container could therefore
+        /// be stored under "machine:&lt;id&gt;", "container:&lt;id&gt;" or "storage:&lt;id&gt;".
+        /// Reading aliases keeps that history alive without rewriting or clearing any data.
+        /// </summary>
+        private static TargetPreference FindPreferenceWithAliases(ItemPreference item, string targetKey)
+        {
+            TargetPreference tp;
+            if (item.Targets.TryGetValue(targetKey, out tp))
+            {
+                return tp;
+            }
+
+            string suffix = StripTargetPrefix(targetKey);
+            if (string.IsNullOrEmpty(suffix))
+            {
+                return null;
+            }
+
+            string[] prefixes = { StableIdentityResolver.PrefixStorage,
+                StableIdentityResolver.PrefixMachine, StableIdentityResolver.PrefixContainer };
+            for (int i = 0; i < prefixes.Length; i++)
+            {
+                if (item.Targets.TryGetValue(prefixes[i] + suffix, out tp))
+                {
+                    return tp;
+                }
+            }
+            return null;
+        }
+
+        private static string StripTargetPrefix(string key)
+        {
+            string[] prefixes = { StableIdentityResolver.PrefixStorage,
+                StableIdentityResolver.PrefixMachine, StableIdentityResolver.PrefixContainer,
+                StableIdentityResolver.PrefixUnknown };
+            for (int i = 0; i < prefixes.Length; i++)
+            {
+                if (key.StartsWith(prefixes[i], StringComparison.Ordinal))
+                {
+                    return key.Substring(prefixes[i].Length);
+                }
+            }
+            return key;
         }
 
         private static ItemPreference Find(string itemKey)
