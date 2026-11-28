@@ -35,10 +35,10 @@ namespace SmartQuickTransfer.Core
                 {
                     Branch(traceId, "night_ground");
                     // Openable items (first-aid boxes, medicine containers, ...) would be opened by
-                    // the vanilla double-click. On the dumping ground the player wants them put
-                    // away instead, straight into the backpack.
+                    // the vanilla double-click. On the dumping ground they are put away like any
+                    // other loot - into the visible backpack grid, never into the hands.
                     bool openable = item.contentWindow != null && !MachineSlotResolver.IsMachineItem(item);
-                    TransferOutcome outcome = TransferToAfterhourPocket(item, sourceWindow, capture, openable);
+                    TransferOutcome outcome = TransferToAfterhourPocket(item, sourceWindow, capture, !openable);
                     ReportSpecial(traceId, "night_ground", item, DescribeFinalArea(item), outcome);
                     return outcome;
                 }
@@ -138,14 +138,13 @@ namespace SmartQuickTransfer.Core
 
             if (fromGround)
             {
-                // Hands first; once they are full the main inventory is the fallback. Openable
-                // items are kept out of the hands and put away directly.
+                // One shared destination for the whole batch: the visible backpack grid first,
+                // then the hands (except for openable items), then the main inventory.
                 bool openable = representative.contentWindow != null
                     && !MachineSlotResolver.IsMachineItem(representative);
-                destination = openable
-                    ? DesktopTransfer.ResolveAfterhourStorage(representative)
-                    : (DesktopTransfer.ResolveAfterhourPocket(representative)
-                       ?? DesktopTransfer.ResolveAfterhourStorage(representative));
+                destination = DesktopTransfer.ResolveAfterhourBackpack(representative)
+                    ?? (openable ? (GameInventory)null : DesktopTransfer.ResolveAfterhourPocket(representative))
+                    ?? DesktopTransfer.ResolveAfterhourStorage(representative);
                 destinationWindow = entry.afterhourWindow;
             }
             else if (DesktopTransfer.IsShowcaseSpecial(representative)
@@ -421,15 +420,19 @@ namespace SmartQuickTransfer.Core
         }
 
         private static TransferOutcome TransferToAfterhourPocket(GameItem item, PixelWindow sourceWindow,
-            FlightCapture capture, bool preferBackpack = false)
+            FlightCapture capture, bool allowHands = true)
         {
-            // Openable items skip the hands entirely and go straight to the backpack.
-            GameInventory pocket = preferBackpack
-                ? DesktopTransfer.ResolveAfterhourStorage(item)
-                : DesktopTransfer.ResolveAfterhourPocket(item);
-            if (pocket == null && !preferBackpack)
+            // The backpack slot in the night-ground window only holds the backpack item. Put loot
+            // into that item's internal grid, which is the "背包" grid the player can actually see.
+            GameInventory pocket = DesktopTransfer.ResolveAfterhourBackpack(item);
+            if (pocket == null && allowHands)
             {
-                // Both hands are occupied: use the main inventory instead of doing nothing.
+                pocket = DesktopTransfer.ResolveAfterhourPocket(item);
+            }
+            if (pocket == null)
+            {
+                // No backpack equipped (or both hands occupied and no backpack): use the main
+                // inventory instead of doing nothing.
                 pocket = DesktopTransfer.ResolveAfterhourStorage(item);
             }
             if (pocket == null)

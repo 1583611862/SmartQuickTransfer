@@ -64,6 +64,44 @@ namespace SmartQuickTransfer.Transfer
             return null;
         }
 
+        /// <summary>
+        /// The night-ground panel captioned "背包" is a slot that only accepts a backpack
+        /// <i>item</i>. Ordinary loot must go into that item's own internal grid to be visible
+        /// beside it; offering the slot itself to GameUtils always falls through to the hands.
+        /// </summary>
+        internal static GameInventory ResolveAfterhourBackpack(GameItem item)
+        {
+            EmporiumEntry entry = EmporiumEntry.Instance;
+            if (entry == null || item == null || entry.afterhourPocketSlotInvBackpack == null)
+            {
+                return null;
+            }
+
+            GameItem backpack = entry.afterhourPocketSlotInvBackpack.childItem;
+            if (backpack == null || ReferenceEquals(backpack, item))
+            {
+                return null;
+            }
+            // Never treat "put this item into itself / its current container" as a move.
+            if (item.parentInventory != null && GraphUtils.FindParentEquals(item.parentInventory, backpack))
+            {
+                return null;
+            }
+
+            try
+            {
+                SlotMarker slot = backpack.TryFindOneValidInventorySlot(item);
+                return slot != null && !ReferenceEquals(slot.inventory, item.parentInventory)
+                    ? slot.inventory
+                    : null;
+            }
+            catch (Exception e)
+            {
+                ModEntry.LogError("afterhour backpack slot check failed: " + e.Message);
+                return null;
+            }
+        }
+
         internal static GameInventory ResolveAfterhourPocket(GameItem item)
         {
             if (item == null)
@@ -77,9 +115,10 @@ namespace SmartQuickTransfer.Transfer
                 return null;
             }
 
+            // Only the actual hand slots. The backpack slot is handled by
+            // ResolveAfterhourBackpack because it never accepts ordinary loot.
             GameInventory[] candidates =
             {
-                entry.afterhourPocketSlotInvBackpack,
                 entry.afterhourPocketSlotInvLeft,
                 entry.afterhourPocketSlotInvRight
             };
@@ -294,6 +333,12 @@ namespace SmartQuickTransfer.Transfer
                 if (ReferenceEquals(inventory, entry.afterhourPocketSlotInvRight))
                 {
                     return "右手";
+                }
+                if (entry.afterhourPocketSlotInvBackpack != null
+                    && entry.afterhourPocketSlotInvBackpack.childItem != null
+                    && GraphUtils.FindParentEquals(inventory, entry.afterhourPocketSlotInvBackpack.childItem))
+                {
+                    return "背包";
                 }
             }
 
